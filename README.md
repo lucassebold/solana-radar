@@ -2,7 +2,7 @@
 
 One screen, five things:
 
-1. **Monthly wallet ranking**: the best-performing wallets over the last 30 days (realized profit, ROI, win rate, trade count).
+1. **Monthly wallet ranking**: the best-performing wallets over the last 30 days (realized profit, ROI, win rate, trade count). Source: MadeOnSol **alpha wallets** (early buyers of Pump.fun tokens, bots excluded by the source). Only the wallets that fit the Helius credit budget are watched.
 2. **Synchronized buy radar**: an alert when **3 or more distinct wallets** from the ranking buy the **same token** within **5 minutes**. The latest alert stays on screen until a newer one arrives.
 3. **Synchronized sell radar**: the same rule for **sells** (a group exiting together).
 4. **Recurring co-buyers**: pairs of monitored wallets that keep buying the same tokens together (counted in distinct tokens, last 30 days).
@@ -15,7 +15,7 @@ History is stored in a local **SQLite** file (built into Node 22, no npm depende
 ## How it works
 
 ```
-MadeOnSol  --(1 call every 6 h)-->  top-50 ranking  --> wallet list
+MadeOnSol alpha leaderboard (3 calls / 6 h) --> ~170 eligible wallets --> budget picks the ones to watch (<= 50)
                                                           |
                                          Helius webhook (enhanced, ~3 s delay)
                                                           |
@@ -29,7 +29,7 @@ MadeOnSol  --(1 call every 6 h)-->  top-50 ranking  --> wallet list
                     DexScreener prices --> since-first-trade %, 5m/15m/1h/4h track record
 ```
 
-- **Ranking**: `GET madeonsol.com/api/v1/kol/leaderboard?period=30d&sort=pnl&limit=50` (free plan: 200 calls/day; this uses ~4/day).
+- **Candidates**: `GET madeonsol.com/api/v1/alpha/leaderboard?period=30d&sort=pnl&limit=100&offset=…`, 3 pages (free plan: 200 calls/day; this uses ~12/day). Wallets with no profit, or not seen trading for more than `MAX_INACTIVE_DAYS` (14), are dropped. `RANKING_SOURCE=kol` switches to the KOL leaderboard (mostly scalper bots; a minimum hold time filters them).
 - **Radar**: one Helius webhook watching the 50 wallets. The server creates/updates **only its own webhook** (identified by its URL) and only edits it when the list changed (each create/edit costs 100 credits).
 - **Trade classification**: Helius' `type` field is often wrong for Pump.fun transactions (they show up as `TRANSFER`/`UNKNOWN`), so it is ignored. Trades come from balance changes in `accountData`, validated against MadeOnSol's feed.
 - **Deduplication**: by transaction signature, persisted, so a webhook redelivery after a restart does not raise a second alert.
@@ -69,14 +69,28 @@ A container's disk is wiped on every deploy/restart, so the SQLite file must liv
 
 Railway exposes the mount path as `RAILWAY_VOLUME_MOUNT_PATH`, which the app picks up automatically (or set `DATA_DIR` yourself). Without a volume the app still works, but the dashboard shows a warning that history is lost on redeploy. Locally the file is `./data/radar.db` (git-ignored).
 
+## Credit budget (making the Helius free plan last the whole month)
+
+Helius charges 1 credit per webhook event (and 100 per webhook edit); the free plan has 1,000,000 per cycle. Wallets differ enormously in how many events they generate, so the app measures instead of guessing:
+
+- Every delivered transaction is attributed to the watched wallets it touches, per hour, and stored. This gives a measured events/day per wallet.
+- Until a wallet has been measured, its load is estimated from the leaderboard trade count times a calibration factor (default 10, re-measured from real data as it accumulates).
+- Every 10 minutes the app computes the **daily allowance** = (credits left in the cycle × `BUDGET_FRACTION` 0.9) / days left (never more than 1.5x an even daily share), then watches the best wallets that fit in 85% of it. A wallet that alone would use more than 15% of the allowance (`MAX_WALLET_SHARE`) is skipped as too noisy. At least `MIN_TRACKED` wallets are always kept.
+- If the measured load goes over the allowance the list is trimmed immediately; otherwise the webhook is only edited for a real change (max 6 edits/day, 30 min apart), because each edit costs 100 credits.
+- **Hard stop**: past `HARD_STOP_FRACTION` (97%) of the plan the webhook is **deleted** and the radar pauses (the dashboard says so); it resumes by itself when the cycle resets.
+- Set `BILLING_DAY` to the day your Helius cycle resets, and `CREDITS_USED_OFFSET` to the credits already used this cycle before the app started counting (see Helius dashboard, Usage).
+- MadeOnSol calls are counted too, with our own cap (`MADEONSOL_DAILY_LIMIT`, 150/day) below the 200/day free quota.
+
+The app counts events it receives; Helius may count retries or listing calls differently, so keep a margin and check the Helius Usage page occasionally.
+
 ## Optional settings (`.env`)
 
-`PORT` (3000) · `DATA_DIR` · `RETENTION_DAYS` (90) · `RANKING_SIZE` (50) · `RANKING_REFRESH_HOURS` (6) · `WINDOW_MINUTES` (5) · `MIN_WALLETS` (3) · `MIN_BUY_SOL` (0.01) · `PAIRS_DAYS` (30) · `PAIRS_MIN_COUNT` (2) · `DAILY_EVENT_WARN` (30000)
+`RANKING_SOURCE` (alpha) · `POOL_SIZE` (300) · `MAX_INACTIVE_DAYS` (14) · `MIN_HOLD_MINUTES` (5, kol only) · `HELIUS_PLAN_CREDITS` (1000000) · `BUDGET_FRACTION` (0.9) · `HARD_STOP_FRACTION` (0.97) · `BILLING_DAY` (1) · `CREDITS_USED_OFFSET` (0) · `CALIBRATION_DEFAULT` (10) · `MIN_TRACKED` (5) · `MAX_WALLET_SHARE` (0.15) · `MAX_WEBHOOK_EDITS_PER_DAY` (6) · `MADEONSOL_DAILY_LIMIT` (150) · `PORT` (3000) · `DATA_DIR` · `RETENTION_DAYS` (90) · `RANKING_SIZE` (50) · `RANKING_REFRESH_HOURS` (6) · `WINDOW_MINUTES` (5) · `MIN_WALLETS` (3) · `MIN_BUY_SOL` (0.01) · `PAIRS_DAYS` (30) · `PAIRS_MIN_COUNT` (2) · `DAILY_EVENT_WARN` (30000)
 
 ## Confirmed / known limitations
 
 - **MadeOnSol free plan**: 200 calls/day; live feeds are delayed 5 min (that is why the radar uses Helius). The leaderboard is not delayed.
-- **Helius free plan**: 1M credits/month, 1 credit per webhook event. The top 50 generate ~9,600 events/day (~290k credits/month). The dashboard warns when a day's volume exceeds `DAILY_EVENT_WARN`.
+- **Helius free plan**: 1M credits/cycle, 1 credit per webhook event. The top-50 KOL wallets (scalper bots) produced ~270 events/min (~11M credits/month) in a live measurement, which is why the default source is now the alpha leaderboard and the credit budget above exists.
 - **Measured webhook latency**: median 3 s (2–6 s) between the transaction and the notification.
 - **ROI**: MadeOnSol's docs do not define the unit of `avg_roi`; it is displayed as a percentage. Profit (`pnl`) is in SOL, per the docs.
 - **Only wallets in the current ranking are tracked.** A wallet that drops out of the top 50 stops being recorded; its past trades stay in the history until retention deletes them.
@@ -90,7 +104,8 @@ Railway exposes the mount path as `RAILWAY_VOLUME_MOUNT_PATH`, which the app pic
 ```
 src/buyParser.js   Helius event -> buy/sell trades (from balance changes)
 src/detector.js    sliding window, unique wallets, deduplication, no spam, restore after restart
-src/store.js       SQLite history (trades, alerts, prices, tokens), pairs and track-record queries
+src/budget.js      credit budget maths: cycle, daily allowance, calibration, wallet selection
+src/store.js       SQLite history (trades, alerts, prices, tokens, usage, wallet activity), pairs and track-record queries
 src/prices.js      DexScreener symbols and prices (batched)
 src/madeonsol.js   normalized ranking (missing = null, never 0)
 src/helius.js      creates/updates the webhook (only ours)

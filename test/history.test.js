@@ -20,7 +20,8 @@ const notBuy = require('./fixtures/not_buy.json');
 
 const MIN = 60 * 1000;
 const SOL = 1e9;
-const cfg = { publicUrl: '', windowMs: 5 * MIN, minWallets: 3, minBuySol: 0.01, dailyEventWarn: 30000, rankingSize: 50, rankingRefreshMs: 1e9, madeonsolKey: 'k', heliusKey: 'h', webhookSecret: 's', durable: true, retentionDays: 90, pairsDays: 30, pairsMinCount: 2 };
+const { makeCfg } = require('./util');
+const cfg = makeCfg();
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'radar-test-')); }
 function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* windows may keep the file briefly */ } }
@@ -235,4 +236,73 @@ test('history: if SQLite cannot open, the app falls back to no history instead o
   const s = openStore(path.join(file, 'sub'), () => {});
   try { assert.strictEqual(s.persistent, false); assert.deepStrictEqual(s.pairs(), []); }
   finally { fs.unlinkSync(file); }
+});
+
+test('credits: usage is summed from the cycle start only, and MadeOnSol calls are counted per day', () => {
+  const dir = tmpDir();
+  try {
+    const store = new Store(dir);
+    store.addUsage('2026-09-30', { events: 5000 });            // previous cycle
+    store.addUsage('2026-10-02', { events: 1000, mgmt: 100 });
+    store.addUsage('2026-10-02', { events: 500, calls: 3 });
+    store.addUsage('2026-10-03', { events: 200, calls: 1 });
+    assert.strictEqual(store.creditsSince('2026-10-01'), 1800);
+    assert.strictEqual(store.madeonsolCalls('2026-10-02'), 3);
+    assert.strictEqual(store.madeonsolCalls('2026-10-09'), 0);
+    store.close();
+  } finally { cleanup(dir); }
+});
+
+test('credits: measured events/day per wallet (window starts at the wallet\'s first hour)', () => {
+  const dir = tmpDir();
+  try {
+    const store = new Store(dir);
+    const nowHour = Math.floor(Date.now() / 3600e3);
+    store.addActivity(nowHour - 1, new Map([['busy', 100], ['quiet', 2]]));
+    store.addActivity(nowHour, new Map([['busy', 100]]));
+    const r = store.activityRates(nowHour, 48);
+    // busy: 200 events over 2 hours -> 100/h -> 2400/day; quiet: 2 events, first seen 2 hours ago -> 1/h -> 24/day
+    assert.ok(Math.abs(r.get('busy') - 2400) < 1e-6);
+    assert.ok(Math.abs(r.get('quiet') - 24) < 1e-6);
+    assert.strictEqual(r.has('nobody'), false);
+    store.close();
+  } finally { cleanup(dir); }
+});
+
+test('app budget: wallets that measure noisy are dropped from the watched list, quiet ones stay', async () => {
+  const dir = tmpDir();
+  try {
+    const { cand } = require('./util');
+    const store = new Store(dir);
+    const app = new RadarApp(makeCfg(), () => {}, store);
+    app.fetchTokens = async () => new Map();
+    app.candidates = Array.from({ length: 12 }, (_, i) => cand(i, 10)); // predicted ~100 events/day each
+    const nowHour = Math.floor(Date.now() / 3600e3);
+    // the first 4 wallets turn out to be extremely noisy in reality (500 events/hour each)
+    store.addActivity(nowHour, new Map(app.candidates.slice(0, 4).map(c => [c.wallet, 500])));
+    await app._rebalance();
+    const tracked = new Set(app.ranking.map(r => r.wallet));
+    app.candidates.slice(0, 4).forEach(c => assert.strictEqual(tracked.has(c.wallet), false, 'noisy wallet dropped'));
+    app.candidates.slice(4).forEach(c => assert.strictEqual(tracked.has(c.wallet), true, 'quiet wallet kept'));
+    assert.strictEqual(app.status.budget.skippedNoisy, 4);
+    store.close();
+  } finally { cleanup(dir); }
+});
+
+test('credits: usage and per-wallet activity buffered in memory are flushed to the store', () => {
+  const dir = tmpDir();
+  try {
+    const store = new Store(dir);
+    const app = new RadarApp(makeCfg(), () => {}, store);
+    app.fetchTokens = async () => new Map();
+    app.walletInfo = new Map([['A', { wallet: 'A' }]]);
+    const tx = { signature: 's', timestamp: 1, feePayer: 'A', accountData: [{ account: 'A', nativeBalanceChange: 0 }] };
+    app.handleWebhook([tx, tx, tx]);
+    assert.strictEqual(app.creditsUsed(), 3, 'buffered events already count');
+    app.flushUsage();
+    assert.strictEqual(app.creditsUsed(), 3, 'and still count once flushed');
+    const rate = store.activityRates(Math.floor(Date.now() / 3600e3), 48).get('A');
+    assert.ok(rate > 0, 'wallet activity persisted (one wallet touched per transaction, not per field)');
+    store.close();
+  } finally { cleanup(dir); }
 });

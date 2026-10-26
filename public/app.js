@@ -55,7 +55,9 @@
     clear(box);
     if (!state) { box.appendChild(h('div', 'skeleton')); box.appendChild(h('div', 'skeleton')); return; }
     var wh = state.status.webhook;
-    if (wh.mode === 'local') notice($('radarNotice'), 'warn', 'Local mode: no webhook configured (PUBLIC_URL is empty), so the radar receives no buys. The ranking works normally.');
+    renderBudget();
+    if (wh.paused) notice($('radarNotice'), 'err', 'Radar paused: the Helius credit budget for this cycle is used up. It resumes automatically when the cycle resets.');
+    else if (wh.mode === 'local') notice($('radarNotice'), 'warn', 'Local mode: no webhook configured (PUBLIC_URL is empty), so the radar receives no buys. The ranking works normally.');
     else if (wh.error) notice($('radarNotice'), 'err', 'Helius webhook error: ' + wh.error);
     else if (wh.warn) notice($('radarNotice'), 'warn', 'High event volume today (' + wh.eventsToday + '): it may exceed the free Helius credit limit.');
     else notice($('radarNotice'), '', '');
@@ -131,6 +133,31 @@
     line.appendChild(b);
     line.appendChild(document.createTextNode(' · now ' + fmtPrice(a.priceNow) + ' SOL'));
     return line;
+  }
+
+  // Helius credit budget: how much of the cycle's credits is used and how many wallets fit.
+  function renderBudget() {
+    var box = $('budgetLine');
+    clear(box);
+    var b = state && state.status.budget;
+    if (!b || state.status.webhook.mode === 'local') return;
+    function item(label, value) {
+      var s = h('span', null, label + ' ');
+      s.appendChild(h('b', null, value));
+      return s;
+    }
+    box.appendChild(item('watching', b.tracked + ' of ' + b.candidates + ' eligible wallets'));
+    box.appendChild(item('credits', fmt(b.used, 0) + ' / ' + fmt(b.planCredits, 0) + ' (' + fmt(b.usedPct, 1) + '%)'));
+    if (b.plannedPerDay !== null && b.allowancePerDay !== null) {
+      box.appendChild(item('expected', '~' + fmt(b.plannedPerDay, 0) + ' events/day'));
+      box.appendChild(item('allowance', fmt(b.allowancePerDay, 0) + '/day'));
+    }
+    if (b.skippedNoisy) box.appendChild(item('skipped as too noisy', String(b.skippedNoisy)));
+    var bar = h('div', 'bar');
+    var fill = h('i', b.usedPct >= 90 ? 'err' : b.usedPct >= 70 ? 'warn' : '');
+    fill.style.width = Math.min(100, b.usedPct) + '%';
+    bar.appendChild(fill);
+    box.appendChild(bar);
   }
 
   function renderStorage() {

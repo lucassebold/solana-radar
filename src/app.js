@@ -1,37 +1,49 @@
 'use strict';
 const { parseTrades } = require('./buyParser');
 const { ConvergenceDetector } = require('./detector');
-const { fetchRanking } = require('./madeonsol');
-const { ensureWebhook } = require('./helius');
+const { fetchCandidates } = require('./madeonsol');
+const helius = require('./helius');
 const { fetchTokens } = require('./prices');
 const { NullStore } = require('./store');
+const budget = require('./budget');
 
 const MAX_ALERTS = 10;
 const MIN = 60 * 1000;
+const HOUR = 3600 * 1000;
+const UNKNOWN_TRADES_PER_DAY = 100; // assumed for a candidate whose trade count the source did not give
 
-// Orchestrates: ranking -> wallet list -> webhook -> trades -> detection -> alerts -> history.
+// Orchestrates: candidates -> budget-aware wallet selection -> webhook -> trades -> detection -> alerts -> history.
 // State lives in memory and is mirrored to the store (SQLite) so it survives restarts.
 class RadarApp {
   constructor(cfg, log, store) {
     this.cfg = cfg;
     this.log = log || console.log;
     this.store = store || new NullStore();
-    this.fetchTokens = fetchTokens; // injectable in tests
+    this.fetchTokens = fetchTokens;           // injectable in tests
+    this.fetchCandidates = fetchCandidates;   // injectable in tests
+    this.helius = helius;                     // injectable in tests
     this.detectors = {
       buy: new ConvergenceDetector({ windowMs: cfg.windowMs, minWallets: cfg.minWallets }),
       sell: new ConvergenceDetector({ windowMs: cfg.windowMs, minWallets: cfg.minWallets })
     };
-    this.ranking = [];
+    this.candidates = [];        // every eligible wallet, best first
+    this.ranking = [];           // the wallets actually watched (a budget-fitting subset of the candidates)
     this.walletInfo = new Map(); // address -> ranking entry
     this.alerts = [];            // newest first
     this.pairs = [];             // recurring co-buyers
     this.performance = { buy: [], sell: [] };
     this.listeners = new Set();
+    this.paused = false;
+    this._buf = { events: 0, mgmt: 0, calls: 0 }; // usage not yet written to the store
+    this._act = new Map();                         // hour -> Map(wallet -> events), not yet written
+    this._mem = { used: 0, callsDay: dayKey(), calls: 0 }; // fallback accounting when there is no persistent store
+    this._edits = { day: dayKey(), n: 0, lastAt: 0 };
     this.status = {
       startedAt: Date.now(),
       ranking: { updatedAt: null, error: null, limited: false, loading: true },
-      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, error: null, lastEventAt: null, eventsToday: 0, eventsDay: dayKey(), warn: false },
-      storage: { enabled: this.store.persistent, durable: cfg.durable, retentionDays: cfg.retentionDays }
+      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, paused: false, error: null, lastEventAt: null, eventsToday: 0, eventsDay: dayKey(), warn: false },
+      storage: { enabled: this.store.persistent, durable: cfg.durable, retentionDays: cfg.retentionDays },
+      budget: { planCredits: cfg.heliusPlanCredits, used: 0, usedPct: 0, allowancePerDay: null, plannedPerDay: null, tracked: 0, candidates: 0, skippedNoisy: 0, calibration: null, paused: false, cycleStart: null, cycleEnd: null }
     };
   }
 
@@ -56,7 +68,9 @@ class RadarApp {
       setInterval(() => { this.detectors.buy.prune(Date.now()); this.detectors.sell.prune(Date.now()); }, MIN),
       setInterval(() => this.priceJob(), MIN),
       setInterval(() => this.analyticsJob(), 5 * MIN),
-      setInterval(() => this.maintenanceJob(), 6 * 3600 * 1000)
+      setInterval(() => this.maintenanceJob(), 6 * HOUR),
+      setInterval(() => this.flushUsage(), 30 * 1000),
+      setInterval(() => this.budgetJob(), 10 * MIN)
     ];
     this._timers.forEach(t => { if (t.unref) t.unref(); });
     this.analyticsJob();
@@ -64,7 +78,7 @@ class RadarApp {
     this.priceJob();
   }
 
-  stop() { (this._timers || []).forEach(clearInterval); }
+  stop() { (this._timers || []).forEach(clearInterval); this.flushUsage(); }
 
   // Rebuilds in-memory state from the store after a restart: recent alerts, and the detector windows
   // (so a wave in progress continues and an alert already sent is not sent again).
@@ -84,18 +98,67 @@ class RadarApp {
     } catch (e) { this.log('restore error: ' + e.message); }
   }
 
+  // ---- quota / credit accounting -------------------------------------------------------------------------------
+
+  // Helius credits spent in the current billing cycle (webhook events + webhook edits + configured offset).
+  creditsUsed() {
+    const day = budget.dayString(budget.cycleStart(Date.now(), this.cfg.billingDay));
+    const base = this.store.persistent ? this.store.creditsSince(day) + this._buf.events + this._buf.mgmt : this._mem.used;
+    return base + this.cfg.creditsUsedOffset;
+  }
+
+  callsToday() {
+    const day = dayKey();
+    if (this.store.persistent) return this.store.madeonsolCalls(day) + this._buf.calls;
+    if (this._mem.callsDay !== day) { this._mem.callsDay = day; this._mem.calls = 0; }
+    return this._mem.calls;
+  }
+
+  _addEvents(n) { this._buf.events += n; this._mem.used += n; }
+  _addMgmt(n) { this._buf.mgmt += n; this._mem.used += n; }
+  _addCalls(n) { this._buf.calls += n; this._mem.calls += n; this.flushUsage(); }
+
+  // Writes buffered usage and per-wallet activity to the store (every 30 s, on stop).
+  flushUsage() {
+    const buf = this._buf; const act = this._act;
+    this._buf = { events: 0, mgmt: 0, calls: 0 };
+    this._act = new Map();
+    if (!this.store.persistent) return;
+    try {
+      if (buf.events || buf.mgmt || buf.calls) this.store.addUsage(dayKey(), buf);
+      act.forEach((counts, hour) => this.store.addActivity(hour, counts));
+    } catch (e) { this.log('usage write error: ' + e.message); }
+  }
+
+  // ---- candidates, selection and the webhook -------------------------------------------------------------------
+
   async refreshRanking() {
     const st = this.status.ranking;
+    const pages = this.cfg.rankingSource === 'kol' ? 1 : Math.max(1, Math.ceil(this.cfg.poolSize / 100));
     try {
-      const ranking = await fetchRanking(this.cfg.madeonsolKey, this.cfg.rankingSize);
-      if (!ranking.length) throw new Error('Empty ranking');
-      this.ranking = ranking;
-      this.walletInfo = new Map(ranking.map(r => [r.wallet, r]));
-      st.updatedAt = Date.now(); st.error = null; st.limited = false;
-      this.log('ranking updated: ' + ranking.length + ' wallets');
-      await this._syncWebhook();
+      if (this.callsToday() + pages > this.cfg.madeonsolDailyLimit) {
+        const err = new Error('MadeOnSol daily call cap reached (self-imposed limit of ' + this.cfg.madeonsolDailyLimit + '/day)');
+        err.kind = 'limit';
+        throw err;
+      }
+      let res;
+      try {
+        res = await this.fetchCandidates(this.cfg.madeonsolKey, { source: this.cfg.rankingSource, poolSize: this.cfg.poolSize, minHoldMinutes: this.cfg.minHoldMinutes });
+      } catch (e) { this._addCalls(1); throw e; }
+      this._addCalls(res.calls);
+
+      const now = Date.now();
+      const maxAge = this.cfg.maxInactiveDays * 24 * HOUR;
+      const eligible = res.entries
+        .filter(e => e.pnlSol !== null && e.pnlSol > 0 && (e.lastSeen === null || now - e.lastSeen <= maxAge))
+        .sort((a, b) => b.pnlSol - a.pnlSol);
+      if (!eligible.length) throw new Error('No eligible wallets returned');
+      this.candidates = eligible;
+      st.updatedAt = now; st.error = null; st.limited = false;
+      this.log('candidates updated: ' + eligible.length + ' eligible wallets (' + this.cfg.rankingSource + ')');
+      await this._rebalance();
     } catch (e) {
-      st.error = e.message; st.limited = e.kind === 'limit'; // keeps the previous ranking
+      st.error = e.message; st.limited = e.kind === 'limit'; // keeps the previous list
       this.log('ranking error: ' + e.message);
     } finally {
       st.loading = false;
@@ -103,18 +166,94 @@ class RadarApp {
     }
   }
 
+  // Every 10 minutes: re-measure wallet noise and credit use, shrink/grow the watched list if needed.
+  async budgetJob() {
+    try { await this._rebalance(); } catch (e) { this.log('budget error: ' + e.message); }
+    this._emit();
+  }
+
+  // Chooses which candidates to watch so the credits last the whole cycle, and keeps the webhook in sync.
+  async _rebalance() {
+    const now = Date.now();
+    const cfg = this.cfg;
+    const used = this.creditsUsed();
+    const b = this.status.budget;
+    b.used = used;
+    b.usedPct = used / cfg.heliusPlanCredits * 100;
+    b.cycleStart = budget.cycleStart(now, cfg.billingDay);
+    b.cycleEnd = budget.cycleEnd(now, cfg.billingDay);
+    b.candidates = this.candidates.length;
+
+    // Hard stop: past this share of the plan the webhook is deleted and the radar pauses until the cycle resets.
+    if (cfg.publicUrl && used >= cfg.heliusPlanCredits * cfg.hardStopFraction) { await this._pause(); b.paused = true; return; }
+    if (this.paused) {
+      this.paused = false; b.paused = false; this.status.webhook.paused = false;
+      this.log('credits available again: resuming the radar');
+      this.ranking = []; // forces a fresh selection + webhook re-creation below
+    }
+    if (!this.candidates.length) return;
+
+    const allowance = budget.allowancePerDay({ planCredits: cfg.heliusPlanCredits, budgetFraction: cfg.budgetFraction, used, now, billingDay: cfg.billingDay });
+    const measured = this.store.activityRates(Math.floor(now / HOUR), 48);
+    const perDay = new Map(this.candidates.filter(c => c.tradesPerDay !== null).map(c => [c.wallet, c.tradesPerDay]));
+    const calib = budget.calibration(this.candidates.map(c => c.wallet), measured, perDay, cfg.calibrationDefault);
+    const rateOf = c => measured.has(c.wallet)
+      ? Math.max(1, measured.get(c.wallet))
+      : Math.max(1, (c.tradesPerDay !== null ? c.tradesPerDay : UNKNOWN_TRADES_PER_DAY) * calib);
+
+    const sel = budget.selectWallets({ candidates: this.candidates, rateOf, allowance, maxCount: cfg.rankingSize, minTracked: cfg.minTracked, maxShare: cfg.maxWalletShare, fill: 0.85 });
+    const next = sel.selected.map(c => c.wallet);
+    const current = this.ranking.map(r => r.wallet);
+    const currentTotal = this.ranking.reduce((x, r) => x + rateOf(r), 0);
+    const over = current.length > 0 && currentTotal > allowance * 1.1;
+
+    if (this._edits.day !== dayKey()) this._edits = { day: dayKey(), n: 0, lastAt: 0 };
+    const editOk = !current.length || over || (this._edits.n < cfg.maxWebhookEditsPerDay && now - this._edits.lastAt >= 30 * MIN);
+
+    if (editOk && budget.shouldUpdateWebhook(current.length ? current : null, next, over)) {
+      this.ranking = sel.selected;
+      this.walletInfo = new Map(this.ranking.map(r => [r.wallet, r]));
+      this.log('watching ' + next.length + ' of ' + this.candidates.length + ' wallets (~' + Math.round(sel.totalPerDay) + ' events/day, allowance ' + Math.round(allowance) + '/day' + (over ? ', over budget: trimmed' : '') + ')');
+      await this._syncWebhook();
+    } else {
+      // Keep the watched list; just refresh its numbers.
+      const fresh = new Map(this.candidates.map(c => [c.wallet, c]));
+      this.ranking = this.ranking.map(r => fresh.get(r.wallet) || r);
+      this.walletInfo = new Map(this.ranking.map(r => [r.wallet, r]));
+    }
+    Object.assign(b, {
+      allowancePerDay: allowance, plannedPerDay: this.ranking.reduce((x, r) => x + rateOf(r), 0),
+      tracked: this.ranking.length, skippedNoisy: sel.skippedNoisy.length, calibration: calib, paused: false
+    });
+  }
+
   async _syncWebhook() {
     const wh = this.status.webhook;
     if (!this.cfg.publicUrl) { wh.registered = false; return; }
     try {
-      const r = await ensureWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius', this.cfg.webhookSecret, this.ranking.map(x => x.wallet));
+      const r = await this.helius.ensureWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius', this.cfg.webhookSecret, this.ranking.map(x => x.wallet));
       wh.registered = true; wh.error = null;
+      if (r.action !== 'unchanged') { this._addMgmt(100); this._edits.n++; this._edits.lastAt = Date.now(); }
       this.log('Helius webhook: ' + r.action);
     } catch (e) {
       wh.registered = false; wh.error = e.message;
       this.log('webhook error: ' + e.message);
     }
   }
+
+  async _pause() {
+    if (this.paused) return;
+    this.paused = true;
+    const wh = this.status.webhook;
+    wh.paused = true; wh.registered = false;
+    this.log('PAUSED: Helius credits reached the hard stop; deleting the webhook until the cycle resets');
+    try {
+      const deleted = await this.helius.deleteWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius');
+      if (deleted) this._addMgmt(100);
+    } catch (e) { wh.error = e.message; this.log('pause error: ' + e.message); }
+  }
+
+  // ---- webhook events ------------------------------------------------------------------------------------------
 
   // Receives the webhook body (array of Helius enhanced transactions).
   handleWebhook(txs) {
@@ -125,6 +264,8 @@ class RadarApp {
     wh.eventsToday += txs.length;
     wh.lastEventAt = Date.now();
     wh.warn = wh.eventsToday > this.cfg.dailyEventWarn;
+    this._addEvents(txs.length);
+    this._countActivity(txs);
 
     let all = [];
     txs.forEach(tx => { all = all.concat(parseTrades(tx, a => this.walletInfo.has(a), this.cfg.minBuySol)); });
@@ -138,6 +279,22 @@ class RadarApp {
     });
     this._emit();
     return count;
+  }
+
+  // Attributes each delivered transaction to the watched wallets it touches (measures how noisy each wallet is).
+  _countActivity(txs) {
+    const hour = Math.floor(Date.now() / HOUR);
+    let counts = this._act.get(hour);
+    if (!counts) { counts = new Map(); this._act.set(hour, counts); }
+    txs.forEach(tx => {
+      const touched = new Set();
+      if (tx && this.walletInfo.has(tx.feePayer)) touched.add(tx.feePayer);
+      ((tx && tx.accountData) || []).forEach(a => {
+        if (a && this.walletInfo.has(a.account)) touched.add(a.account);
+        ((a && a.tokenBalanceChanges) || []).forEach(c => { if (c && this.walletInfo.has(c.userAccount)) touched.add(c.userAccount); });
+      });
+      touched.forEach(w => counts.set(w, (counts.get(w) || 0) + 1));
+    });
   }
 
   _publish(side, out) {
@@ -217,7 +374,7 @@ class RadarApp {
       const since = Date.now() - this.cfg.pairsDays * 24 * 3600 * 1000;
       const pairs = this.store.pairs(since, this.cfg.windowMs, this.cfg.pairsMinCount, 15);
       const mints = Array.from(new Set(pairs.reduce((acc, p) => acc.concat(p.mints.map(m => m.mint)), [])));
-      let symbols = this.store.symbols(mints);
+      const symbols = this.store.symbols(mints);
       const missing = mints.filter(m => !symbols.has(m));
       if (missing.length) {
         const fetched = await this.fetchTokens(missing);

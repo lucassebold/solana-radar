@@ -7,7 +7,8 @@ const { normalizeEntry } = require('../src/madeonsol');
 const { sameSet } = require('../src/helius');
 const { scrub } = require('../src/http');
 
-const cfg = { publicUrl: '', windowMs: 5 * 60 * 1000, minWallets: 3, minBuySol: 0.01, dailyEventWarn: 30000, rankingSize: 50, rankingRefreshMs: 1e9, madeonsolKey: 'k', heliusKey: 'h', webhookSecret: 's' };
+const { makeCfg } = require('./util');
+const cfg = makeCfg();
 const SOL = 1e9;
 
 // Synthetic buy transaction (only inside automated tests; it never reaches the UI).

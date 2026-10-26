@@ -42,4 +42,15 @@ async function ensureWebhook(apiKey, webhookUrl, secret, wallets) {
   return { action: 'updated', id: existing.webhookID };
 }
 
-module.exports = { ensureWebhook, sameSet };
+// Deletes OUR webhook (matched by URL) so it stops spending credits. Returns true if one was deleted.
+async function deleteWebhook(apiKey, webhookUrl) {
+  const list = await request('GET', BASE + '?api-key=' + apiKey);
+  if (list.status !== 200) throw new Error('Helius list webhooks failed (' + list.status + ')');
+  const existing = (parseJson(list.body) || []).find(w => w.webhookURL === webhookUrl);
+  if (!existing) return false;
+  const r = await request('DELETE', BASE + '/' + existing.webhookID + '?api-key=' + apiKey);
+  if (r.status !== 200) throw new Error('Helius delete webhook failed (' + r.status + ')');
+  return true;
+}
+
+module.exports = { ensureWebhook, deleteWebhook, sameSet };

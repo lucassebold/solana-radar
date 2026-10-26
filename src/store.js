@@ -36,6 +36,14 @@ class Store {
         price_native REAL, price_usd REAL,
         PRIMARY KEY (alert_id, checkpoint)
       );
+      CREATE TABLE IF NOT EXISTS wallet_activity (
+        hour INTEGER NOT NULL, wallet TEXT NOT NULL, events INTEGER NOT NULL,
+        PRIMARY KEY (hour, wallet)
+      );
+      CREATE TABLE IF NOT EXISTS usage (
+        day TEXT PRIMARY KEY, events INTEGER NOT NULL DEFAULT 0,
+        mgmt_credits INTEGER NOT NULL DEFAULT 0, madeonsol_calls INTEGER NOT NULL DEFAULT 0
+      );
       CREATE TABLE IF NOT EXISTS tokens (
         mint TEXT PRIMARY KEY, symbol TEXT, name TEXT, updated_at INTEGER
       );
@@ -157,7 +165,45 @@ class Store {
     return out;
   }
 
+  // --- credit / quota accounting ---
+  // Webhook events delivered per wallet per hour (used to measure how noisy each wallet really is).
+  addActivity(hour, countsByWallet) {
+    const stmt = this.db.prepare('INSERT INTO wallet_activity (hour, wallet, events) VALUES (?, ?, ?) ON CONFLICT(hour, wallet) DO UPDATE SET events = events + excluded.events');
+    this.db.exec('BEGIN');
+    try { countsByWallet.forEach((n, w) => stmt.run(hour, w, n)); this.db.exec('COMMIT'); } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+  }
+
+  // Measured events/day per wallet over the last `hours`: Map(wallet -> eventsPerDay).
+  // A wallet's window starts at its first recorded hour (conservative: quiet wallets look slightly busier).
+  activityRates(nowHour, hours) {
+    const since = nowHour - hours;
+    const rows = this.db.prepare('SELECT wallet, SUM(events) AS ev, MIN(hour) AS first FROM wallet_activity WHERE hour > ? GROUP BY wallet').all(since);
+    const out = new Map();
+    rows.forEach(r => out.set(r.wallet, r.ev / Math.max(1, Math.min(hours, nowHour - r.first + 1)) * 24));
+    return out;
+  }
+
+  // delta: {events, mgmt, calls}; day is YYYY-MM-DD (UTC).
+  addUsage(day, delta) {
+    this.db.prepare(`INSERT INTO usage (day, events, mgmt_credits, madeonsol_calls) VALUES (?, ?, ?, ?)
+      ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, mgmt_credits = mgmt_credits + excluded.mgmt_credits, madeonsol_calls = madeonsol_calls + excluded.madeonsol_calls`)
+      .run(day, delta.events || 0, delta.mgmt || 0, delta.calls || 0);
+  }
+
+  // Helius credits recorded since a day (inclusive): events (1 credit each) + webhook management credits.
+  creditsSince(day) {
+    const r = this.db.prepare('SELECT COALESCE(SUM(events), 0) AS ev, COALESCE(SUM(mgmt_credits), 0) AS mg FROM usage WHERE day >= ?').get(day);
+    return r.ev + r.mg;
+  }
+
+  madeonsolCalls(day) {
+    const r = this.db.prepare('SELECT madeonsol_calls AS c FROM usage WHERE day = ?').get(day);
+    return r ? r.c : 0;
+  }
+
   prune(cutoffTs) {
+    this.db.prepare('DELETE FROM wallet_activity WHERE hour < ?').run(Math.floor(Date.now() / 3600e3) - 24 * 8);
+    this.db.prepare('DELETE FROM usage WHERE day < ?').run(new Date(Date.now() - 70 * 86400e3).toISOString().slice(0, 10));
     this.db.prepare('DELETE FROM trades WHERE ts < ?').run(cutoffTs);
     const old = this.db.prepare('SELECT id FROM alerts WHERE emitted_at < ?').all(cutoffTs).map(r => r.id);
     old.forEach(id => {
@@ -187,6 +233,11 @@ class NullStore {
   alertsDueForPrice() { return []; }
   pairs() { return []; }
   performance() { return { buy: [], sell: [] }; }
+  addActivity() {}
+  activityRates() { return new Map(); }
+  addUsage() {}
+  creditsSince() { return 0; }
+  madeonsolCalls() { return 0; }
   prune() {}
   close() {}
 }
