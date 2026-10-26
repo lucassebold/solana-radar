@@ -69,6 +69,10 @@ A container's disk is wiped on every deploy/restart, so the SQLite file must liv
 
 Railway exposes the mount path as `RAILWAY_VOLUME_MOUNT_PATH`, which the app picks up automatically (or set `DATA_DIR` yourself). Without a volume the app still works, but the dashboard shows a warning that history is lost on redeploy. Locally the file is `./data/radar.db` (git-ignored).
 
+### Pausing the radar (RADAR_PAUSED)
+
+To stop spending Helius credits without touching the Helius dashboard, set `RADAR_PAUSED=true` in the service variables (Railway restarts the service). At start the app **deletes its own webhook** (matched by URL, one 100-credit call) and does not recreate it; the dashboard shows "paused". The ranking keeps updating and the history stays. To resume, remove the variable (or set it to `false`): on the next start the app recreates the webhook by itself. Accepted true values: `true`, `1`, `yes`, `on`. If the deletion fails, the error is shown and retried every 10 minutes.
+
 ## Credit budget (making the Helius free plan last the whole month)
 
 Helius charges 1 credit per webhook event (and 100 per webhook edit); the free plan has 1,000,000 per cycle. Wallets differ enormously in how many events they generate, so the app measures instead of guessing:

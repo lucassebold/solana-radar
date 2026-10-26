@@ -41,7 +41,7 @@ class RadarApp {
     this.status = {
       startedAt: Date.now(),
       ranking: { updatedAt: null, error: null, limited: false, loading: true },
-      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, paused: false, error: null, lastEventAt: null, eventsToday: 0, pushesToday: 0, eventsDay: dayKey(), warn: false },
+      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, paused: false, pausedReason: null, error: null, lastEventAt: null, eventsToday: 0, pushesToday: 0, eventsDay: dayKey(), warn: false },
       storage: { enabled: this.store.persistent, durable: cfg.durable, retentionDays: cfg.retentionDays },
       budget: { creditUnit: cfg.creditUnit, planCredits: cfg.heliusPlanCredits, used: 0, usedPct: 0, allowancePerDay: null, plannedPerDay: null, tracked: 0, candidates: 0, skippedNoisy: 0, calibration: null, paused: false, cycleStart: null, cycleEnd: null }
     };
@@ -51,6 +51,14 @@ class RadarApp {
   _emit() { this.listeners.forEach(fn => { try { fn(this.snapshot()); } catch (e) { /* client went away */ } }); }
 
   snapshot() {
+    // Keep the credit counter fresh on screen (it is otherwise only recomputed by the 10-minute budget job).
+    const now = Date.now();
+    if (!this._usedAt || now - this._usedAt > 5000) {
+      const b = this.status.budget;
+      b.used = this.creditsUsed();
+      b.usedPct = b.used / this.cfg.heliusPlanCredits * 100;
+      this._usedAt = now;
+    }
     return {
       now: Date.now(), windowMs: this.cfg.windowMs, minWallets: this.cfg.minWallets,
       status: this.status, ranking: this.ranking, alerts: this.alerts,
@@ -187,10 +195,11 @@ class RadarApp {
     // Hard stop: past this share of the plan the webhook is deleted and the radar pauses until the cycle resets.
     if (cfg.publicUrl && used >= cfg.heliusPlanCredits * cfg.hardStopFraction) { await this._pause(); b.paused = true; return; }
     if (this.paused) {
-      this.paused = false; b.paused = false; this.status.webhook.paused = false;
+      this.paused = false; b.paused = false; this.status.webhook.paused = false; this.status.webhook.pausedReason = null;
       this.log('credits available again: resuming the radar');
       this.ranking = []; // forces a fresh selection + webhook re-creation below
     }
+    if (cfg.paused && cfg.publicUrl) await this._manualPause(); // also retries a failed deletion
     if (!this.candidates.length) return;
 
     const allowance = budget.allowancePerDay({ planCredits: cfg.heliusPlanCredits, budgetFraction: cfg.budgetFraction, used, now, billingDay: cfg.billingDay });
@@ -230,6 +239,7 @@ class RadarApp {
   async _syncWebhook() {
     const wh = this.status.webhook;
     if (!this.cfg.publicUrl) { wh.registered = false; return; }
+    if (this.cfg.paused) { wh.paused = true; wh.pausedReason = 'manual'; wh.registered = false; return; } // _rebalance handles the deletion
     try {
       const r = await this.helius.ensureWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius', this.cfg.webhookSecret, this.ranking.map(x => x.wallet));
       wh.registered = true; wh.error = null;
@@ -241,11 +251,25 @@ class RadarApp {
     }
   }
 
+  // RADAR_PAUSED=true: delete OUR webhook once per process (matched by URL) and never recreate it.
+  async _manualPause() {
+    const wh = this.status.webhook;
+    wh.paused = true; wh.pausedReason = 'manual'; wh.registered = false;
+    if (this._manualPauseDone) return;
+    this._manualPauseDone = true;
+    this.log('PAUSED by RADAR_PAUSED: deleting our Helius webhook (the ranking keeps updating, no credits are spent)');
+    try {
+      const deleted = await this.helius.deleteWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius');
+      if (deleted) this._addMgmt(100);
+      wh.error = null;
+    } catch (e) { wh.error = e.message; this._manualPauseDone = false; this.log('pause error: ' + e.message); } // retried on the next budget tick
+  }
+
   async _pause() {
     if (this.paused) return;
     this.paused = true;
     const wh = this.status.webhook;
-    wh.paused = true; wh.registered = false;
+    wh.paused = true; wh.pausedReason = 'budget'; wh.registered = false;
     this.log('PAUSED: Helius credits reached the hard stop; deleting the webhook until the cycle resets');
     try {
       const deleted = await this.helius.deleteWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius');

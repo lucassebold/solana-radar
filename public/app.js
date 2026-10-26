@@ -37,6 +37,7 @@
       if (rk.loading) { msg = 'loading data…'; }
       else if (rk.limited) { cls = 'pill pill-err'; msg = 'rate limit reached'; }
       else if (!state.ranking.length) { cls = 'pill pill-err'; msg = 'no ranking'; }
+      else if (wh.paused) { cls = 'pill pill-warn'; msg = wh.pausedReason === 'manual' ? 'paused · radar off' : 'paused · credit limit'; }
       else if (wh.mode === 'local') { cls = 'pill pill-warn'; msg = 'local mode · radar off'; }
       else if (wh.error || !wh.registered) { cls = 'pill pill-err'; msg = 'radar error'; }
       else { cls = 'pill pill-ok'; msg = 'live · ~seconds delay'; }
@@ -56,7 +57,9 @@
     if (!state) { box.appendChild(h('div', 'skeleton')); box.appendChild(h('div', 'skeleton')); return; }
     var wh = state.status.webhook;
     renderBudget();
-    if (wh.paused) notice($('radarNotice'), 'err', 'Radar paused: the Helius credit budget for this cycle is used up. It resumes automatically when the cycle resets.');
+    if (wh.paused && wh.pausedReason === 'manual' && wh.error) notice($('radarNotice'), 'err', 'Paused (RADAR_PAUSED is set) but the webhook could NOT be deleted, so Helius may still be sending events and charging credits: ' + wh.error + '. It is retried every 10 minutes; you can also delete it in the Helius dashboard.');
+    else if (wh.paused && wh.pausedReason === 'manual') notice($('radarNotice'), 'warn', 'Radar paused manually (RADAR_PAUSED is set): the webhook is deleted, so no buys arrive and no Helius credits are spent. The ranking keeps updating. Remove the variable and restart to resume.');
+    else if (wh.paused) notice($('radarNotice'), 'err', 'Radar paused: the Helius credit budget for this cycle is used up. It resumes automatically when the cycle resets.');
     else if (wh.mode === 'local') notice($('radarNotice'), 'warn', 'Local mode: no webhook configured (PUBLIC_URL is empty), so the radar receives no buys. The ranking works normally.');
     else if (wh.error) notice($('radarNotice'), 'err', 'Helius webhook error: ' + wh.error);
     else if (wh.warn) notice($('radarNotice'), 'warn', 'High event volume today (' + wh.eventsToday + '): it may exceed the free Helius credit limit.');

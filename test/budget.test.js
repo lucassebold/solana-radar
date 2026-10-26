@@ -209,3 +209,62 @@ test('credits: the unit is configurable (per transaction by default, per deliver
   assert.strictEqual(perPush.creditsUsed(), 2, 'push mode: 1 credit per delivery');
   assert.strictEqual(perPush.status.webhook.eventsToday, 8, 'transactions are still counted for diagnostics');
 });
+
+// ---- manual pause (RADAR_PAUSED) ----
+
+test('pause switch: deletes our webhook once, never recreates it, and the ranking keeps working', async () => {
+  const cands = Array.from({ length: 10 }, (_, i) => cand(i, 10));
+  const app = appWith({ publicUrl: 'https://example.test', paused: true }, cands);
+  await app._rebalance();
+  assert.strictEqual(app.helius.calls.del, 1, 'webhook deleted');
+  assert.strictEqual(app.helius.calls.ensure.length, 0, 'never (re)created while paused');
+  assert.strictEqual(app.status.webhook.paused, true);
+  assert.strictEqual(app.status.webhook.pausedReason, 'manual');
+  assert.strictEqual(app.status.webhook.registered, false);
+  assert.ok(app.ranking.length > 0, 'the wallet list is still computed and shown');
+  await app._rebalance();
+  assert.strictEqual(app.helius.calls.del, 1, 'not deleted again on later ticks');
+  assert.strictEqual(app._mem.used, 100, 'the deletion costs 100 credits, counted once');
+});
+
+test('pause switch: a failed deletion is reported and retried on the next tick', async () => {
+  const cands = Array.from({ length: 10 }, (_, i) => cand(i, 10));
+  const app = appWith({ publicUrl: 'https://example.test', paused: true }, cands);
+  let attempts = 0;
+  app.helius.deleteWebhook = async () => { attempts++; if (attempts === 1) throw new Error('Helius down'); return true; };
+  await app._rebalance();
+  assert.strictEqual(attempts, 1);
+  assert.ok(/Helius down/.test(app.status.webhook.error), 'the error is visible');
+  assert.strictEqual(app.status.webhook.paused, true);
+  await app._rebalance();
+  assert.strictEqual(attempts, 2, 'retried');
+  assert.strictEqual(app.status.webhook.error, null);
+  await app._rebalance();
+  assert.strictEqual(attempts, 2, 'and not again once it worked');
+});
+
+test('pause switch: without a public URL (local mode) nothing external is touched', async () => {
+  const cands = Array.from({ length: 10 }, (_, i) => cand(i, 10));
+  const app = appWith({ publicUrl: '', paused: true }, cands);
+  await app._rebalance();
+  assert.strictEqual(app.helius.calls.del, 0);
+  assert.strictEqual(app.helius.calls.ensure.length, 0);
+});
+
+test('pause switch: without it the same app creates the webhook (resume)', async () => {
+  const cands = Array.from({ length: 10 }, (_, i) => cand(i, 10));
+  const app = appWith({ publicUrl: 'https://example.test', paused: false }, cands);
+  await app._rebalance();
+  assert.strictEqual(app.helius.calls.ensure.length, 1);
+  assert.strictEqual(app.helius.calls.del, 0);
+  assert.strictEqual(app.status.webhook.paused, false);
+});
+
+test('pause switch: RADAR_PAUSED is read from the environment (true/1/yes/on, any case; anything else is off)', () => {
+  const { execFileSync } = require('child_process');
+  const path = require('path');
+  const root = path.join(__dirname, '..');
+  const read = v => execFileSync(process.execPath, ['-e', "console.log(require('./src/config').paused)"], { cwd: root, env: Object.assign({}, process.env, { RADAR_PAUSED: v }) }).toString().trim();
+  ['true', 'TRUE', ' 1 ', 'yes', 'on'].forEach(v => assert.strictEqual(read(v), 'true', JSON.stringify(v)));
+  ['false', '0', 'no', '', 'banana'].forEach(v => assert.strictEqual(read(v), 'false', JSON.stringify(v)));
+});

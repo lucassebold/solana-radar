@@ -50,6 +50,9 @@ module.exports = {
   // Helius credit budget (free plan: 1,000,000 credits per cycle; 1 credit per webhook event, 100 per webhook edit)
   // What one credit buys: 'event' = one transaction (conservative, default) or 'push' = one HTTP delivery (a delivery can
   // batch several transactions). Compare the dashboard counters with the Helius Usage page to find out which is true.
+  // Manual pause: with RADAR_PAUSED=true the app deletes its Helius webhook at start and does not recreate it (no credits
+  // are spent). Remove the variable (or set it to false) and restart to resume.
+  paused: ['true', '1', 'yes', 'on'].indexOf(String(process.env.RADAR_PAUSED || '').trim().toLowerCase()) >= 0,
   creditUnit: process.env.CREDIT_UNIT === 'push' ? 'push' : 'event',
   heliusPlanCredits: num('HELIUS_PLAN_CREDITS', 1000000),
   budgetFraction: num('BUDGET_FRACTION', 0.9),   // we plan to use at most this share of the plan
