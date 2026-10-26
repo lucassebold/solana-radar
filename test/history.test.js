@@ -258,13 +258,17 @@ test('credits: measured events/day per wallet (window starts at the wallet\'s fi
   try {
     const store = new Store(dir);
     const nowHour = Math.floor(Date.now() / 3600e3);
+    const nowMs = (nowHour + 0.5) * 3600e3; // 30 min into the current hour
     store.addActivity(nowHour - 1, new Map([['busy', 100], ['quiet', 2]]));
-    store.addActivity(nowHour, new Map([['busy', 100]]));
-    const r = store.activityRates(nowHour, 48);
-    // busy: 200 events over 2 hours -> 100/h -> 2400/day; quiet: 2 events, first seen 2 hours ago -> 1/h -> 24/day
-    assert.ok(Math.abs(r.get('busy') - 2400) < 1e-6);
-    assert.ok(Math.abs(r.get('quiet') - 24) < 1e-6);
+    store.addActivity(nowHour, new Map([['busy', 100], ['fresh', 50]]));
+    const r = store.activityRates(nowMs, 48, 0.5);
+    // busy: 200 events over 1.5 h of real time -> 133.3/h -> 3200/day; quiet: 2 events over 1.5 h -> 32/day
+    assert.ok(Math.abs(r.get('busy') - 3200) < 1e-6);
+    assert.ok(Math.abs(r.get('quiet') - 32) < 1e-6);
     assert.strictEqual(r.has('nobody'), false);
+    // fresh: first seen 30 min ago -> exactly at the minimum window, counted: 50 events / 0.5 h -> 2400/day
+    assert.ok(Math.abs(r.get('fresh') - 2400) < 1e-6);
+    assert.strictEqual(store.activityRates((nowHour + 0.4) * 3600e3, 48, 0.5).has('fresh'), false, 'under 30 min of observation: not trusted yet');
     store.close();
   } finally { cleanup(dir); }
 });
@@ -278,8 +282,8 @@ test('app budget: wallets that measure noisy are dropped from the watched list, 
     app.fetchTokens = async () => new Map();
     app.candidates = Array.from({ length: 12 }, (_, i) => cand(i, 10)); // predicted ~100 events/day each
     const nowHour = Math.floor(Date.now() / 3600e3);
-    // the first 4 wallets turn out to be extremely noisy in reality (500 events/hour each)
-    store.addActivity(nowHour, new Map(app.candidates.slice(0, 4).map(c => [c.wallet, 500])));
+    // the first 4 wallets turn out to be extremely noisy in reality (2000 events in one hour each, observed for 2+ hours)
+    store.addActivity(nowHour - 2, new Map(app.candidates.slice(0, 4).map(c => [c.wallet, 2000])));
     await app._rebalance();
     const tracked = new Set(app.ranking.map(r => r.wallet));
     app.candidates.slice(0, 4).forEach(c => assert.strictEqual(tracked.has(c.wallet), false, 'noisy wallet dropped'));
@@ -301,7 +305,7 @@ test('credits: usage and per-wallet activity buffered in memory are flushed to t
     assert.strictEqual(app.creditsUsed(), 3, 'buffered events already count');
     app.flushUsage();
     assert.strictEqual(app.creditsUsed(), 3, 'and still count once flushed');
-    const rate = store.activityRates(Math.floor(Date.now() / 3600e3), 48).get('A');
+    const rate = store.activityRates(Date.now() + 3600e3, 48, 0).get('A'); // look an hour ahead so the window is >= 1 h
     assert.ok(rate > 0, 'wallet activity persisted (one wallet touched per transaction, not per field)');
     store.close();
   } finally { cleanup(dir); }

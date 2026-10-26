@@ -48,6 +48,9 @@ module.exports = {
   maxInactiveDays: num('MAX_INACTIVE_DAYS', 14), // drop wallets not seen trading recently
   minHoldMinutes: num('MIN_HOLD_MINUTES', 5),    // kol source only: removes scalper bots
   // Helius credit budget (free plan: 1,000,000 credits per cycle; 1 credit per webhook event, 100 per webhook edit)
+  // What one credit buys: 'event' = one transaction (conservative, default) or 'push' = one HTTP delivery (a delivery can
+  // batch several transactions). Compare the dashboard counters with the Helius Usage page to find out which is true.
+  creditUnit: process.env.CREDIT_UNIT === 'push' ? 'push' : 'event',
   heliusPlanCredits: num('HELIUS_PLAN_CREDITS', 1000000),
   budgetFraction: num('BUDGET_FRACTION', 0.9),   // we plan to use at most this share of the plan
   hardStopFraction: num('HARD_STOP_FRACTION', 0.97), // webhook is deleted (radar pauses) beyond this share

@@ -41,9 +41,9 @@ class RadarApp {
     this.status = {
       startedAt: Date.now(),
       ranking: { updatedAt: null, error: null, limited: false, loading: true },
-      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, paused: false, error: null, lastEventAt: null, eventsToday: 0, eventsDay: dayKey(), warn: false },
+      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, paused: false, error: null, lastEventAt: null, eventsToday: 0, pushesToday: 0, eventsDay: dayKey(), warn: false },
       storage: { enabled: this.store.persistent, durable: cfg.durable, retentionDays: cfg.retentionDays },
-      budget: { planCredits: cfg.heliusPlanCredits, used: 0, usedPct: 0, allowancePerDay: null, plannedPerDay: null, tracked: 0, candidates: 0, skippedNoisy: 0, calibration: null, paused: false, cycleStart: null, cycleEnd: null }
+      budget: { creditUnit: cfg.creditUnit, planCredits: cfg.heliusPlanCredits, used: 0, usedPct: 0, allowancePerDay: null, plannedPerDay: null, tracked: 0, candidates: 0, skippedNoisy: 0, calibration: null, paused: false, cycleStart: null, cycleEnd: null }
     };
   }
 
@@ -194,7 +194,7 @@ class RadarApp {
     if (!this.candidates.length) return;
 
     const allowance = budget.allowancePerDay({ planCredits: cfg.heliusPlanCredits, budgetFraction: cfg.budgetFraction, used, now, billingDay: cfg.billingDay });
-    const measured = this.store.activityRates(Math.floor(now / HOUR), 48);
+    const measured = this.store.activityRates(now, 48, 0.5); // only wallets observed for 30+ min count as measured
     const perDay = new Map(this.candidates.filter(c => c.tradesPerDay !== null).map(c => [c.wallet, c.tradesPerDay]));
     const calib = budget.calibration(this.candidates.map(c => c.wallet), measured, perDay, cfg.calibrationDefault);
     const rateOf = c => measured.has(c.wallet)
@@ -260,11 +260,12 @@ class RadarApp {
     if (!Array.isArray(txs)) return 0;
     const wh = this.status.webhook;
     const today = dayKey();
-    if (wh.eventsDay !== today) { wh.eventsDay = today; wh.eventsToday = 0; wh.warn = false; }
+    if (wh.eventsDay !== today) { wh.eventsDay = today; wh.eventsToday = 0; wh.pushesToday = 0; wh.warn = false; }
     wh.eventsToday += txs.length;
+    wh.pushesToday += 1;
     wh.lastEventAt = Date.now();
     wh.warn = wh.eventsToday > this.cfg.dailyEventWarn;
-    this._addEvents(txs.length);
+    this._addEvents(this.cfg.creditUnit === 'push' ? 1 : txs.length); // credits: per delivery or per transaction
     this._countActivity(txs);
 
     let all = [];

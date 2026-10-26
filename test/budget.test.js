@@ -193,3 +193,19 @@ test('app budget: a webhook edit is rate-limited, but trimming when over budget 
   assert.strictEqual(app.helius.calls.ensure.length, 2, 'over budget: trimmed right away');
   assert.ok(app.ranking.length < 24);
 });
+
+test('credits: the unit is configurable (per transaction by default, per delivery on request) and deliveries are counted', () => {
+  const batch = [{ signature: 'a' }, { signature: 'b' }, { signature: 'c' }, { signature: 'd' }];
+  const perEvent = appWith({}, []);
+  perEvent.handleWebhook(batch);
+  perEvent.handleWebhook(batch);
+  assert.strictEqual(perEvent.creditsUsed(), 8, 'default: 1 credit per transaction');
+  assert.strictEqual(perEvent.status.webhook.pushesToday, 2);
+  assert.strictEqual(perEvent.status.webhook.eventsToday, 8);
+
+  const perPush = appWith({ creditUnit: 'push' }, []);
+  perPush.handleWebhook(batch);
+  perPush.handleWebhook(batch);
+  assert.strictEqual(perPush.creditsUsed(), 2, 'push mode: 1 credit per delivery');
+  assert.strictEqual(perPush.status.webhook.eventsToday, 8, 'transactions are still counted for diagnostics');
+});

@@ -81,11 +81,11 @@ Helius charges 1 credit per webhook event (and 100 per webhook edit); the free p
 - Set `BILLING_DAY` to the day your Helius cycle resets, and `CREDITS_USED_OFFSET` to the credits already used this cycle before the app started counting (see Helius dashboard, Usage).
 - MadeOnSol calls are counted too, with our own cap (`MADEONSOL_DAILY_LIMIT`, 150/day) below the 200/day free quota.
 
-The app counts events it receives; Helius may count retries or listing calls differently, so keep a margin and check the Helius Usage page occasionally.
+**What counts as one credit?** Helius says "each webhook push consumes 1 credit". A push may be one delivery carrying several transactions, so the app shows both counters (transactions and deliveries, "today" line in the radar panel). By default it counts one credit per **transaction** (the conservative reading). To find out the truth, note the Helius Usage number, wait 30-60 min, and compare how much it grew with the two counters; if it grew like the deliveries, set `CREDIT_UNIT=push`. Helius may also count retries or listing calls differently, so keep a margin and check the Usage page occasionally.
 
 ## Optional settings (`.env`)
 
-`RANKING_SOURCE` (alpha) · `POOL_SIZE` (300) · `MAX_INACTIVE_DAYS` (14) · `MIN_HOLD_MINUTES` (5, kol only) · `HELIUS_PLAN_CREDITS` (1000000) · `BUDGET_FRACTION` (0.9) · `HARD_STOP_FRACTION` (0.97) · `BILLING_DAY` (1) · `CREDITS_USED_OFFSET` (0) · `CALIBRATION_DEFAULT` (10) · `MIN_TRACKED` (5) · `MAX_WALLET_SHARE` (0.15) · `MAX_WEBHOOK_EDITS_PER_DAY` (6) · `MADEONSOL_DAILY_LIMIT` (150) · `PORT` (3000) · `DATA_DIR` · `RETENTION_DAYS` (90) · `RANKING_SIZE` (50) · `RANKING_REFRESH_HOURS` (6) · `WINDOW_MINUTES` (5) · `MIN_WALLETS` (3) · `MIN_BUY_SOL` (0.01) · `PAIRS_DAYS` (30) · `PAIRS_MIN_COUNT` (2) · `DAILY_EVENT_WARN` (30000)
+`RANKING_SOURCE` (alpha) · `POOL_SIZE` (300) · `MAX_INACTIVE_DAYS` (14) · `MIN_HOLD_MINUTES` (5, kol only) · `HELIUS_PLAN_CREDITS` (1000000) · `BUDGET_FRACTION` (0.9) · `HARD_STOP_FRACTION` (0.97) · `BILLING_DAY` (1) · `CREDIT_UNIT` (event|push) · `CREDITS_USED_OFFSET` (0) · `CALIBRATION_DEFAULT` (10) · `MIN_TRACKED` (5) · `MAX_WALLET_SHARE` (0.15) · `MAX_WEBHOOK_EDITS_PER_DAY` (6) · `MADEONSOL_DAILY_LIMIT` (150) · `PORT` (3000) · `DATA_DIR` · `RETENTION_DAYS` (90) · `RANKING_SIZE` (50) · `RANKING_REFRESH_HOURS` (6) · `WINDOW_MINUTES` (5) · `MIN_WALLETS` (3) · `MIN_BUY_SOL` (0.01) · `PAIRS_DAYS` (30) · `PAIRS_MIN_COUNT` (2) · `DAILY_EVENT_WARN` (30000)
 
 ## Confirmed / known limitations
 

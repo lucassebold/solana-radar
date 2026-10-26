@@ -175,11 +175,17 @@ class Store {
 
   // Measured events/day per wallet over the last `hours`: Map(wallet -> eventsPerDay).
   // A wallet's window starts at its first recorded hour (conservative: quiet wallets look slightly busier).
-  activityRates(nowHour, hours) {
-    const since = nowHour - hours;
+  // The window is the REAL elapsed time since the wallet's first recorded hour (not whole hours), and wallets observed
+  // for less than `minHours` are left out: a few minutes of data say nothing reliable about events/day.
+  activityRates(nowMs, hours, minHours) {
+    const since = Math.floor(nowMs / 3600e3) - hours;
     const rows = this.db.prepare('SELECT wallet, SUM(events) AS ev, MIN(hour) AS first FROM wallet_activity WHERE hour > ? GROUP BY wallet').all(since);
     const out = new Map();
-    rows.forEach(r => out.set(r.wallet, r.ev / Math.max(1, Math.min(hours, nowHour - r.first + 1)) * 24));
+    rows.forEach(r => {
+      const elapsed = Math.min(hours, (nowMs - r.first * 3600e3) / 3600e3);
+      if (elapsed < (minHours || 0)) return;
+      out.set(r.wallet, r.ev / Math.max(elapsed, 1 / 12) * 24);
+    });
     return out;
   }
 

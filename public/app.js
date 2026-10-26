@@ -153,6 +153,9 @@
       box.appendChild(item('allowance', fmt(b.allowancePerDay, 0) + '/day'));
     }
     if (b.skippedNoisy) box.appendChild(item('skipped as too noisy', String(b.skippedNoisy)));
+    var wh = state.status.webhook;
+    box.appendChild(item('today', fmt(wh.eventsToday, 0) + ' transactions in ' + fmt(wh.pushesToday || 0, 0) + ' deliveries'));
+    box.appendChild(item('counting', b.creditUnit === 'push' ? '1 credit per delivery' : '1 credit per transaction'));
     var bar = h('div', 'bar');
     var fill = h('i', b.usedPct >= 90 ? 'err' : b.usedPct >= 70 ? 'warn' : '');
     fill.style.width = Math.min(100, b.usedPct) + '%';
