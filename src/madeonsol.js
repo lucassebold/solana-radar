@@ -7,8 +7,8 @@ class SourceError extends Error {
   constructor(message, kind) { super(message); this.kind = kind || 'error'; } // 'limit' | 'error'
 }
 
-// Campos ausentes viram null (nunca 0). pnl vem em SOL ("realized PnL in SOL" na doc).
-// avg_roi: a doc nao define a unidade; e tratado como percentual (ver README).
+// Missing fields become null (never 0). pnl is in SOL ("realized PnL in SOL" in the docs).
+// avg_roi: the docs do not define its unit; it is treated as a percentage (see README).
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
 
 function normalizeEntry(e) {
@@ -29,13 +29,13 @@ async function fetchRanking(apiKey, size) {
   try {
     res = await request('GET', url, { headers: { Authorization: 'Bearer ' + apiKey } });
   } catch (e) {
-    throw new SourceError('MadeOnSol inacessivel: ' + scrub(e.message, [apiKey]), 'error');
+    throw new SourceError('MadeOnSol unreachable: ' + scrub(e.message, [apiKey]), 'error');
   }
-  if (res.status === 429) throw new SourceError('Limite de requisicoes da MadeOnSol atingido', 'limit');
+  if (res.status === 429) throw new SourceError('MadeOnSol rate limit reached', 'limit');
   const json = parseJson(res.body);
   if (res.status !== 200 || !json || !Array.isArray(json.leaderboard)) {
     const code = json && (json.error || json.message);
-    throw new SourceError('MadeOnSol respondeu ' + res.status + (code ? ' (' + scrub(code, [apiKey]) + ')' : ''), 'error');
+    throw new SourceError('MadeOnSol responded ' + res.status + (code ? ' (' + scrub(code, [apiKey]) + ')' : ''), 'error');
   }
   return json.leaderboard
     .filter(e => e && typeof e.wallet === 'string' && e.wallet.length >= 32)

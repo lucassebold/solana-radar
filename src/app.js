@@ -7,25 +7,25 @@ const tokenInfo = require('./tokenInfo');
 
 const MAX_ALERTS = 10;
 
-// Orquestra: ranking -> lista de carteiras -> webhook -> compras -> deteccao -> alertas. Tudo em memoria.
+// Orchestrates: ranking -> wallet list -> webhook -> buys -> detection -> alerts. Everything in memory.
 class RadarApp {
   constructor(cfg, log) {
     this.cfg = cfg;
     this.log = log || console.log;
     this.detector = new ConvergenceDetector({ windowMs: cfg.windowMs, minWallets: cfg.minWallets });
     this.ranking = [];
-    this.walletInfo = new Map(); // endereco -> entrada do ranking
-    this.alerts = [];            // mais recente primeiro
+    this.walletInfo = new Map(); // address -> ranking entry
+    this.alerts = [];            // newest first
     this.listeners = new Set();
     this.status = {
       startedAt: Date.now(),
       ranking: { updatedAt: null, error: null, limited: false, loading: true },
-      webhook: { mode: cfg.publicUrl ? 'ativo' : 'local', registered: false, error: null, lastEventAt: null, eventsToday: 0, eventsDay: dayKey(), warn: false }
+      webhook: { mode: cfg.publicUrl ? 'live' : 'local', registered: false, error: null, lastEventAt: null, eventsToday: 0, eventsDay: dayKey(), warn: false }
     };
   }
 
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
-  _emit() { this.listeners.forEach(fn => { try { fn(this.snapshot()); } catch (e) { /* cliente caiu */ } }); }
+  _emit() { this.listeners.forEach(fn => { try { fn(this.snapshot()); } catch (e) { /* client went away */ } }); }
 
   snapshot() {
     return { now: Date.now(), windowMs: this.cfg.windowMs, minWallets: this.cfg.minWallets, status: this.status, ranking: this.ranking, alerts: this.alerts };
@@ -45,15 +45,15 @@ class RadarApp {
     const st = this.status.ranking;
     try {
       const ranking = await fetchRanking(this.cfg.madeonsolKey, this.cfg.rankingSize);
-      if (!ranking.length) throw new Error('Ranking vazio');
+      if (!ranking.length) throw new Error('Empty ranking');
       this.ranking = ranking;
       this.walletInfo = new Map(ranking.map(r => [r.wallet, r]));
       st.updatedAt = Date.now(); st.error = null; st.limited = false;
-      this.log('ranking atualizado: ' + ranking.length + ' carteiras');
+      this.log('ranking updated: ' + ranking.length + ' wallets');
       await this._syncWebhook();
     } catch (e) {
-      st.error = e.message; st.limited = e.kind === 'limit'; // mantem o ranking anterior
-      this.log('erro no ranking: ' + e.message);
+      st.error = e.message; st.limited = e.kind === 'limit'; // keeps the previous ranking
+      this.log('ranking error: ' + e.message);
     } finally {
       st.loading = false;
       this._emit();
@@ -66,14 +66,14 @@ class RadarApp {
     try {
       const r = await ensureWebhook(this.cfg.heliusKey, this.cfg.publicUrl + '/webhook/helius', this.cfg.webhookSecret, this.ranking.map(x => x.wallet));
       wh.registered = true; wh.error = null;
-      this.log('webhook Helius: ' + r.action);
+      this.log('Helius webhook: ' + r.action);
     } catch (e) {
       wh.registered = false; wh.error = e.message;
-      this.log('erro no webhook: ' + e.message);
+      this.log('webhook error: ' + e.message);
     }
   }
 
-  // Recebe o corpo do webhook (array de transacoes enhanced da Helius).
+  // Receives the webhook body (array of Helius enhanced transactions).
   handleWebhook(txs) {
     if (!Array.isArray(txs)) return 0;
     const wh = this.status.webhook;
@@ -107,7 +107,7 @@ class RadarApp {
     if (i >= 0) { view.symbol = this.alerts[i].symbol; view.name = this.alerts[i].name; this.alerts.splice(i, 1); }
     this.alerts.unshift(view);
     this.alerts.length = Math.min(this.alerts.length, MAX_ALERTS);
-    this.log('ALERTA ' + out.kind + ': ' + a.walletCount + ' carteiras em ' + a.mint);
+    this.log('ALERT ' + out.kind + ': ' + a.walletCount + ' wallets on ' + a.mint);
     if (!view.symbol) {
       tokenInfo.lookup(a.mint).then(info => {
         if (info) { view.symbol = info.symbol; view.name = info.name; this._emit(); }

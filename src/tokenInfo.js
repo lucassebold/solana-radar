@@ -1,9 +1,9 @@
 'use strict';
 const { request, parseJson } = require('./http');
 
-const cache = new Map(); // mint -> {symbol, name, priceUsd} | null
+const cache = new Map(); // mint -> {symbol, name} (successes only)
 
-// Simbolo/nome do token via DexScreener (API publica, gratuita, sem chave). Falha => null (tela mostra o mint).
+// Token symbol/name via DexScreener (public API, free, no key). Failure => null (the UI shows the mint).
 async function lookup(mint) {
   if (cache.has(mint)) return cache.get(mint);
   let info = null;
@@ -17,7 +17,7 @@ async function lookup(mint) {
       info = { symbol: t.symbol || null, name: t.name || null };
     }
   } catch (e) { info = null; }
-  if (info) { if (cache.size > 500) cache.clear(); cache.set(mint, info); } // so guarda sucesso: falha pode ser passageira
+  if (info) { if (cache.size > 500) cache.clear(); cache.set(mint, info); } // failures may be transient: not cached
   return info;
 }
 

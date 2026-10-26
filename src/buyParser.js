@@ -1,6 +1,6 @@
 'use strict';
 
-// Mints que nao contam como "token comprado": SOL embrulhado e stablecoins.
+// Mints that do not count as a "bought token": wrapped SOL and stablecoins.
 const WSOL = 'So11111111111111111111111111111111111111112';
 const IGNORED_MINTS = {
   [WSOL]: true,
@@ -16,10 +16,10 @@ function tokenDelta(change) {
   return Number.isFinite(amount) ? amount / Math.pow(10, decimals) : 0;
 }
 
-// A Helius classifica mal as transacoes da Pump.fun (aparecem como TRANSFER/UNKNOWN), entao o campo
-// `type` e ignorado. Uma compra e: o saldo do token aumentou na carteira E ela gastou SOL.
-// Fonte: variacoes de saldo em `accountData` (validadas contra o feed da MadeOnSol).
-// walletSet: objeto/Set-like com as carteiras monitoradas -> funcao has(addr).
+// Helius often mislabels Pump.fun transactions (they show up as TRANSFER/UNKNOWN), so the `type` field
+// is ignored. A buy is: the wallet's token balance went up AND the wallet spent SOL.
+// Source: balance changes in `accountData` (validated against MadeOnSol's feed).
+// isMonitored(address) -> boolean.
 function parseBuys(tx, isMonitored, minBuySol) {
   if (!tx || !tx.signature || tx.transactionError) return [];
   const accountData = Array.isArray(tx.accountData) ? tx.accountData : [];
@@ -44,13 +44,13 @@ function parseBuys(tx, isMonitored, minBuySol) {
     const nativeDelta = nativeByWallet[wallet] || 0; // lamports
     const wsolDelta = tokens[WSOL] || 0;
     const solSpent = (nativeDelta < 0 ? -nativeDelta / 1e9 : 0) + (wsolDelta < 0 ? -wsolDelta : 0);
-    if (solSpent < minBuySol) return; // nao gastou SOL de verdade: airdrop, transferencia, venda
+    if (solSpent < minBuySol) return; // did not really spend SOL: airdrop, transfer, sell
     const bought = Object.keys(tokens).filter(m => !IGNORED_MINTS[m] && tokens[m] > 0);
     bought.forEach(mint => {
       buys.push({
         wallet,
         mint,
-        // Com varios tokens na mesma transacao nao da para atribuir o valor a um deles.
+        // With several tokens in one transaction the SOL amount cannot be attributed to any one of them.
         solAmount: bought.length === 1 ? solSpent : null,
         signature: tx.signature,
         ts

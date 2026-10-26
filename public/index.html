@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,48 +18,48 @@
       <p class="sub">SMART WALLET MONITOR</p>
     </div>
   </div>
-  <div id="pill" class="pill pill-wait"><span class="dot"></span><span id="pillText">conectando…</span></div>
+  <div id="pill" class="pill pill-wait"><span class="dot"></span><span id="pillText">connecting…</span></div>
 </header>
 
 <main>
   <section class="summary">
     <div class="card">
-      <span class="label">Ranking mensal</span>
+      <span class="label">Monthly ranking</span>
       <strong id="sumWallets">—</strong>
-      <span class="hint">carteiras monitoradas (top por lucro realizado, 30 dias)</span>
+      <span class="hint">wallets monitored (top by realized profit, 30 days)</span>
     </div>
     <div class="card">
-      <span class="label">Radar de compras</span>
+      <span class="label">Buy radar</span>
       <strong id="sumRule">—</strong>
-      <span class="hint">carteiras distintas comprando o mesmo token na janela</span>
+      <span class="hint">distinct wallets buying the same token within the window</span>
     </div>
   </section>
 
   <section class="card block">
     <div class="block-head">
-      <h2>Radar de compras sincronizadas</h2>
+      <h2>Synchronized buy radar</h2>
       <span id="radarMeta" class="meta"></span>
     </div>
     <div id="radarNotice"></div>
     <div id="alerts"></div>
-    <p class="disclaimer">Possível oportunidade para análise. Não é recomendação e não garante valorização: carteiras monitoradas também vendem para quem copia.</p>
+    <p class="disclaimer">Possible opportunity for analysis only. Not financial advice and no guarantee of gains: monitored wallets also sell to the people who copy them.</p>
   </section>
 
   <section class="card block">
     <div class="block-head">
-      <h2>Ranking de carteiras</h2>
+      <h2>Wallet ranking</h2>
       <span id="rankMeta" class="meta"></span>
     </div>
     <div id="rankNotice"></div>
     <div class="table-wrap">
       <table id="rankTable">
         <thead>
-          <tr><th>#</th><th>Carteira</th><th class="num">Lucro (SOL)</th><th class="num">ROI méd.</th><th class="num">Acerto</th><th class="num">Operações</th></tr>
+          <tr><th>#</th><th>Wallet</th><th class="num">Profit (SOL)</th><th class="num">Avg ROI</th><th class="num">Win rate</th><th class="num">Trades</th></tr>
         </thead>
         <tbody id="rankBody"></tbody>
       </table>
     </div>
-    <p class="foot">Dados: MadeOnSol, últimos 30 dias. “—” = a fonte não informou (não é zero).</p>
+    <p class="foot">Data: MadeOnSol, last 30 days. “—” = not provided by the source (not zero).</p>
   </section>
 </main>
 <script src="app.js"></script>

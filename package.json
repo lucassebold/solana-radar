@@ -1,7 +1,7 @@
 {
   "name": "solana-radar",
   "version": "0.1.0",
-  "description": "SOLANA RADAR - monitor de carteiras inteligentes (ranking mensal + radar de compras sincronizadas)",
+  "description": "SOLANA RADAR - smart wallet monitor (monthly ranking + synchronized buy radar)",
   "main": "src/server.js",
   "private": true,
   "scripts": {

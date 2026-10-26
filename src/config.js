@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// Carrega .env (se existir) sem sobrescrever variaveis ja definidas no ambiente.
+// Loads .env (if present) without overriding variables already set in the environment.
 function loadEnvFile(file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return; }
@@ -37,6 +37,6 @@ module.exports = {
   windowMs: num('WINDOW_MINUTES', 5) * 60 * 1000,
   minWallets: num('MIN_WALLETS', 3),
   minBuySol: num('MIN_BUY_SOL', 0.01),
-  // Aviso (nao bloqueia): eventos de webhook/dia acima disso estouram ~1M creditos/mes da Helius.
+  // Warning only (does not block): more webhook events/day than this would exceed ~1M Helius credits/month.
   dailyEventWarn: num('DAILY_EVENT_WARN', 30000)
 };

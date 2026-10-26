@@ -3,7 +3,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
-// Cliente HTTP minimo (Node 12 nao tem fetch). Resolve sempre com {status, headers, body}.
+// Minimal HTTP client (Node 12 has no fetch). Always resolves with {status, headers, body}.
 function request(method, urlStr, opts) {
   opts = opts || {};
   return new Promise((resolve, reject) => {
@@ -32,7 +32,7 @@ function parseJson(body) {
   try { return JSON.parse(body); } catch (e) { return null; }
 }
 
-// Remove segredos de mensagens de erro/log.
+// Masks secrets in error/log messages.
 function scrub(text, secrets) {
   let out = String(text);
   (secrets || []).forEach(s => { if (s) out = out.split(s).join('***'); });

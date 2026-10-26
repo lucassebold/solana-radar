@@ -1,80 +1,80 @@
 # SOLANA RADAR — Smart Wallet Monitor
 
-Duas funções, uma tela:
+Two features, one screen:
 
-1. **Ranking mensal** das melhores carteiras (lucro realizado, ROI, taxa de acerto, nº de operações — últimos 30 dias).
-2. **Radar de compras sincronizadas**: alerta quando **3 ou mais carteiras distintas** do ranking compram o **mesmo token** dentro de **5 minutos**. O último alerta fica na tela até chegar outro.
+1. **Monthly wallet ranking**: the best-performing wallets over the last 30 days (realized profit, ROI, win rate, trade count).
+2. **Synchronized buy radar**: raises an alert when **3 or more distinct wallets** from the ranking buy the **same token** within **5 minutes**. The latest alert stays on screen until a newer one arrives.
 
-Sem banco de dados: tudo fica em memória (ao reiniciar, o radar recomeça vazio e o ranking é buscado de novo).
-Sem dependências npm. Funciona em Node 12+.
+No database: everything lives in memory (after a restart the radar starts empty and the ranking is fetched again).
+No npm dependencies. Runs on Node 12+.
 
-> Possível oportunidade para análise. Não é recomendação e não garante valorização.
+> Possible opportunity for analysis only. Not financial advice and no guarantee of gains.
 
-## Como funciona
+## How it works
 
 ```
-MadeOnSol  --(1 chamada a cada 6 h)-->  ranking top 50  --> lista de carteiras
-                                                               |
-                                              Helius webhook (enhanced, aviso em ~3 s)
-                                                               |
-                         compra = saldo do token subiu E a carteira gastou SOL
-                                                               |
-                           janela móvel de 5 min por token, carteiras únicas
-                                                               |
-                                              alerta  -->  dashboard (SSE)
+MadeOnSol  --(1 call every 6 h)-->  top-50 ranking  --> wallet list
+                                                          |
+                                         Helius webhook (enhanced, ~3 s delay)
+                                                          |
+                    buy = token balance went up AND the wallet spent SOL
+                                                          |
+                         5-minute sliding window per token, unique wallets
+                                                          |
+                                           alert  -->  dashboard (SSE)
 ```
 
-- **Ranking**: `GET madeonsol.com/api/v1/kol/leaderboard?period=30d&sort=pnl&limit=50` (plano grátis: 200 chamadas/dia; usamos ~4/dia).
-- **Radar**: um webhook da Helius com as 50 carteiras. O servidor cria/atualiza **só o seu próprio webhook** (identificado pela URL) e só edita se a lista mudou (cada criação/edição custa 100 créditos).
-- **Classificação de compra**: o campo `type` da Helius erra com frequência nas transações da Pump.fun (aparecem como `TRANSFER`/`UNKNOWN`), então ele é ignorado. Usamos as variações de saldo em `accountData`, validadas contra o feed da MadeOnSol.
-- **Símbolo/nome do token**: DexScreener (API pública, sem chave). Se falhar, a tela mostra só o mint.
+- **Ranking**: `GET madeonsol.com/api/v1/kol/leaderboard?period=30d&sort=pnl&limit=50` (free plan: 200 calls/day; this uses ~4/day).
+- **Radar**: one Helius webhook watching the 50 wallets. The server creates/updates **only its own webhook** (identified by its URL) and only edits it when the list changed (each create/edit costs 100 credits).
+- **Buy classification**: Helius' `type` field is often wrong for Pump.fun transactions (they show up as `TRANSFER`/`UNKNOWN`), so it is ignored. Buys are detected from balance changes in `accountData`, validated against MadeOnSol's feed.
+- **Token symbol/name**: DexScreener (public API, no key). If it fails the UI shows only the mint.
 
-## Configuração
+## Configuration
 
-1. Copie `.env.example` para `.env` e preencha:
+1. Copy `.env.example` to `.env` and fill in:
 
-| Variável | O que é |
+| Variable | What it is |
 |---|---|
-| `MADEONSOL_API_KEY` | chave grátis em https://madeonsol.com/developer |
-| `HELIUS_API_KEY` | chave grátis em https://dashboard.helius.dev (só necessária com `PUBLIC_URL`) |
-| `WEBHOOK_SECRET` | texto aleatório longo (mín. 16). A Helius o envia no cabeçalho `Authorization`; sem ele o servidor responde 401 |
-| `PUBLIC_URL` | URL pública do servidor, ex. `https://seu-app.up.railway.app`. **Vazio = modo local** (ranking funciona, radar inativo) |
+| `MADEONSOL_API_KEY` | free key from https://madeonsol.com/developer |
+| `HELIUS_API_KEY` | free key from https://dashboard.helius.dev (only needed with `PUBLIC_URL`) |
+| `WEBHOOK_SECRET` | long random text (min. 16 chars). Helius sends it in the `Authorization` header; without it the server answers 401 |
+| `PUBLIC_URL` | public URL of the server, e.g. `https://your-app.up.railway.app`. **Empty = local mode** (ranking works, radar off) |
 
-   Gerar segredo: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
+   Generate a secret: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
 
-2. Rodar: `npm start` e abrir http://localhost:3000
-3. Testes: `npm test`
+2. Run: `npm start` and open http://localhost:3000
+3. Tests: `npm test`
 
-Chaves ficam só no backend (`.env` está no `.gitignore`); nada é enviado ao navegador e erros/logs têm as chaves mascaradas.
+Keys stay on the backend only (`.env` is in `.gitignore`); nothing is sent to the browser, and errors/logs have keys masked.
 
-### Radar ao vivo (precisa de URL pública)
+### Live radar (needs a public URL)
 
-A Helius entrega os avisos por HTTP, então o servidor precisa ser alcançável pela internet: faça deploy (ex.: Railway) ou use um túnel temporário e coloque a URL em `PUBLIC_URL`. Ao subir, o servidor registra o webhook sozinho.
-Para parar de gastar créditos: apague o webhook em https://dashboard.helius.dev/webhooks.
+Helius delivers events over HTTP, so the server must be reachable from the internet: deploy it (e.g. on Railway) and set `PUBLIC_URL` to the deployed domain (no trailing slash). On startup the server registers the webhook by itself. On Railway set the variables in the service's **Variables** tab and expose port 8080 (set `PORT=8080`).
+To stop spending credits: delete the webhook at https://dashboard.helius.dev/webhooks.
 
-## Opcionais (`.env`)
+## Optional settings (`.env`)
 
 `PORT` (3000) · `RANKING_SIZE` (50) · `RANKING_REFRESH_HOURS` (6) · `WINDOW_MINUTES` (5) · `MIN_WALLETS` (3) · `MIN_BUY_SOL` (0.01) · `DAILY_EVENT_WARN` (30000)
 
-## Limitações confirmadas / conhecidas
+## Confirmed / known limitations
 
-- **MadeOnSol grátis**: 200 chamadas/dia; feeds ao vivo têm 5 min de atraso (por isso o radar usa a Helius). A leaderboard não tem atraso.
-- **Helius grátis**: 1M créditos/mês, 1 crédito por evento de webhook. O top 50 gera ~9.600 eventos/dia (~290 mil créditos/mês). O painel avisa se o volume do dia passar de `DAILY_EVENT_WARN`.
-- **Latência medida** do webhook: mediana 3 s (2–6 s) entre a transação e o aviso.
-- **ROI**: a documentação da MadeOnSol não define a unidade de `avg_roi`; é exibido como percentual. Lucro (`pnl`) é em SOL, conforme a doc.
-- **Sem histórico**: reiniciar o servidor perde o último alerta e a janela atual (compras dos últimos 5 min não são recuperadas).
-- **Termos da MadeOnSol**: o plano grátis é para uso próprio. Antes de abrir o dashboard ao público, leia os termos (há um plano Business com licença de embed e atribuição).
-- Se uma carteira do ranking for um bot com milhares de swaps/dia, ela consome créditos; reduza `RANKING_SIZE` se precisar.
+- **MadeOnSol free plan**: 200 calls/day; live feeds are delayed 5 min (that is why the radar uses Helius). The leaderboard is not delayed.
+- **Helius free plan**: 1M credits/month, 1 credit per webhook event. The top 50 generate ~9,600 events/day (~290k credits/month). The dashboard warns when a day's volume exceeds `DAILY_EVENT_WARN`.
+- **Measured webhook latency**: median 3 s (2–6 s) between the transaction and the notification.
+- **ROI**: MadeOnSol's docs do not define the unit of `avg_roi`; it is displayed as a percentage. Profit (`pnl`) is in SOL, per the docs.
+- **No history**: restarting the server loses the latest alert and the current window (buys from the last 5 minutes are not recovered).
+- **MadeOnSol terms**: the free plan is for personal use. Read the terms before opening the dashboard to the public (a Business plan with an embed license and attribution exists).
+- If a ranked wallet is a bot with thousands of swaps/day it consumes credits; lower `RANKING_SIZE` if needed.
 
-## Estrutura
+## Layout
 
 ```
-src/buyParser.js   evento Helius -> compras (por variação de saldo)
-src/detector.js    janela móvel, carteiras únicas, deduplicação, sem spam
-src/madeonsol.js   ranking normalizado (ausente = null, nunca 0)
-src/helius.js      cria/atualiza o webhook (só o nosso)
-src/app.js         orquestra tudo, estado em memória
+src/buyParser.js   Helius event -> buys (from balance changes)
+src/detector.js    sliding window, unique wallets, deduplication, no spam
+src/madeonsol.js   normalized ranking (missing = null, never 0)
+src/helius.js      creates/updates the webhook (only ours)
+src/app.js         wires everything together, in-memory state
 src/server.js      HTTP: dashboard, /api/state, /events (SSE), /webhook/helius
-public/            dashboard (HTML/CSS/JS puro, texto de terceiros sempre via textContent)
-test/              32 testes (npm test), com transações reais capturadas como fixture
+public/            dashboard (plain HTML/CSS/JS, third-party text always via textContent)
+test/              automated tests (npm test), with real captured transactions as fixtures
 ```

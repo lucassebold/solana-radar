@@ -9,21 +9,21 @@ function sameSet(a, b) {
   return b.every(x => s.has(x));
 }
 
-// Garante UM webhook "enhanced" nosso apontando para webhookUrl, com exatamente `wallets`.
-// - So mexe no webhook cuja URL e a nossa (nunca em outros da conta).
-// - So edita se a lista mudou (cada criacao/edicao custa 100 creditos).
-// Retorna {action: 'created'|'updated'|'unchanged', id}.
+// Ensures ONE "enhanced" webhook of ours pointing at webhookUrl, watching exactly `wallets`.
+// - Only touches the webhook whose URL is ours (never other webhooks on the account).
+// - Only edits when the list changed (each create/edit costs 100 credits).
+// Returns {action: 'created'|'updated'|'unchanged', id}.
 async function ensureWebhook(apiKey, webhookUrl, secret, wallets) {
   const url = BASE + '?api-key=' + apiKey;
-  const fail = (what, res) => new Error('Helius ' + what + ' falhou (' + res.status + '): ' + scrub(res.body.slice(0, 200), [apiKey, secret]));
+  const fail = (what, res) => new Error('Helius ' + what + ' failed (' + res.status + '): ' + scrub(res.body.slice(0, 200), [apiKey, secret]));
 
   const list = await request('GET', url);
-  if (list.status !== 200) throw fail('listar webhooks', list);
+  if (list.status !== 200) throw fail('list webhooks', list);
   const existing = (parseJson(list.body) || []).find(w => w.webhookURL === webhookUrl);
 
   const body = {
     webhookURL: webhookUrl,
-    transactionTypes: ['ANY'], // o tipo da Helius e pouco confiavel na Pump.fun; classificamos nos mesmos
+    transactionTypes: ['ANY'], // the Helius type is unreliable for Pump.fun; we classify buys ourselves
     accountAddresses: wallets,
     webhookType: 'enhanced',
     authHeader: secret
@@ -31,14 +31,14 @@ async function ensureWebhook(apiKey, webhookUrl, secret, wallets) {
 
   if (!existing) {
     const r = await request('POST', url, { json: body });
-    if (r.status !== 200 && r.status !== 201) throw fail('criar webhook', r);
+    if (r.status !== 200 && r.status !== 201) throw fail('create webhook', r);
     return { action: 'created', id: (parseJson(r.body) || {}).webhookID };
   }
   if (sameSet(existing.accountAddresses || [], wallets) && (existing.authHeader === undefined || existing.authHeader === secret)) {
     return { action: 'unchanged', id: existing.webhookID };
   }
   const r = await request('PUT', BASE + '/' + existing.webhookID + '?api-key=' + apiKey, { json: body });
-  if (r.status !== 200) throw fail('atualizar webhook', r);
+  if (r.status !== 200) throw fail('update webhook', r);
   return { action: 'updated', id: existing.webhookID };
 }
 

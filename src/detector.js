@@ -2,22 +2,22 @@
 
 const MAX_BUYS_PER_MINT = 500;
 
-// Detecta convergencia: >= minWallets carteiras DISTINTAS comprando o mesmo mint em uma janela movel.
-// Estado so em memoria. Um alerta so e (re)emitido quando entra uma carteira que ainda nao estava nele
-// (sem spam); uma nova onda so e emitida depois que a anterior ficou fora da janela.
+// Detects convergence: >= minWallets DISTINCT wallets buying the same mint inside a sliding window.
+// In-memory state only. An alert is only (re)emitted when a wallet that was not in it arrives
+// (no spam); a new wave is only emitted after the previous one has left the window.
 class ConvergenceDetector {
   constructor(opts) {
     this.windowMs = opts.windowMs;
     this.minWallets = opts.minWallets;
     this.buysByMint = new Map();   // mint -> [{wallet, ts, solAmount, signature}]
-    this.seen = new Map();         // signature|wallet|mint -> ts (deduplicacao)
+    this.seen = new Map();         // signature|wallet|mint -> ts (deduplication)
     this.alertByMint = new Map();  // mint -> {id, wallets:Set, firstTs, lastTs}
   }
 
-  // Retorna null ou {kind:'new'|'update', alert}.
+  // Returns null or {kind:'new'|'update', alert}.
   addBuy(buy) {
     const key = buy.signature + '|' + buy.wallet + '|' + buy.mint;
-    if (this.seen.has(key)) return null; // evento repetido (reenvio do webhook)
+    if (this.seen.has(key)) return null; // repeated event (webhook redelivery)
     this.seen.set(key, buy.ts);
 
     let list = this.buysByMint.get(buy.mint);
@@ -39,7 +39,7 @@ class ConvergenceDetector {
     if (sameWave) {
       let hasNew = false;
       wallets.forEach(w => { if (!prev.wallets.has(w)) hasNew = true; });
-      if (!hasNew) return null; // mesmo grupo: nao repete o alerta
+      if (!hasNew) return null; // same group: do not repeat the alert
       const merged = new Set(prev.wallets);
       wallets.forEach(w => merged.add(w));
       prev.wallets = merged;
@@ -52,7 +52,7 @@ class ConvergenceDetector {
     return { kind: 'new', alert: this._build(buy.mint, state, list) };
   }
 
-  // Melhor janela [t, t+windowMs] que contem a compra recem-chegada, escolhendo a com mais carteiras distintas.
+  // Best window [t, t+windowMs] containing the newly arrived buy, picking the one with the most distinct wallets.
   _bestGroupContaining(list, buy) {
     let best = null;
     let bestCount = 0;
@@ -68,7 +68,7 @@ class ConvergenceDetector {
     return best;
   }
 
-  // Monta o alerta com UMA compra (a primeira) por carteira, dentro do periodo da onda.
+  // Builds the alert with ONE buy (the first) per wallet, within the wave's time span.
   _build(mint, state, list) {
     const firstByWallet = new Map();
     list.forEach(b => {
@@ -87,7 +87,7 @@ class ConvergenceDetector {
     };
   }
 
-  // Descarta dados antigos. `now` em ms. Mantem memoria limitada.
+  // Drops old data to keep memory bounded. `now` in ms.
   prune(now) {
     const cutoff = now - this.windowMs * 2;
     this.buysByMint.forEach((list, mint) => {

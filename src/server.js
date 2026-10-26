@@ -13,8 +13,8 @@ const log = msg => console.log(new Date().toISOString().slice(11, 19) + ' ' + sc
 const missing = [];
 if (!cfg.heliusKey && cfg.publicUrl) missing.push('HELIUS_API_KEY');
 if (!cfg.madeonsolKey) missing.push('MADEONSOL_API_KEY');
-if (cfg.publicUrl && cfg.webhookSecret.length < 16) missing.push('WEBHOOK_SECRET (min. 16 caracteres)');
-if (missing.length) { console.error('Configure no .env: ' + missing.join(', ')); process.exit(1); }
+if (cfg.publicUrl && cfg.webhookSecret.length < 16) missing.push('WEBHOOK_SECRET (min. 16 characters)');
+if (missing.length) { console.error('Missing configuration (set in .env or the host environment variables): ' + missing.join(', ')); process.exit(1); }
 
 const app = new RadarApp(cfg, log);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -33,7 +33,7 @@ function sendJson(res, status, obj) {
 }
 
 function handleWebhook(req, res) {
-  // A Helius envia o `authHeader` configurado no webhook no cabecalho Authorization.
+  // Helius sends the webhook's configured `authHeader` value in the Authorization header.
   if (!cfg.webhookSecret || !safeEqual(req.headers.authorization || '', cfg.webhookSecret)) {
     res.writeHead(401); return res.end();
   }
@@ -47,8 +47,8 @@ function handleWebhook(req, res) {
     if (aborted) return;
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { res.writeHead(400); return res.end(); }
-    try { app.handleWebhook(body); } catch (e) { log('erro ao processar webhook: ' + e.message); }
-    res.writeHead(200); res.end('ok'); // sempre 200 rapido: erro 5xx faria a Helius reenviar (e cobrar de novo)
+    try { app.handleWebhook(body); } catch (e) { log('error processing webhook: ' + e.message); }
+    res.writeHead(200); res.end('ok'); // always a fast 200: a 5xx would make Helius redeliver (and charge again)
   });
 }
 
@@ -85,6 +85,6 @@ app.onChange(snap => {
 setInterval(() => sseClients.forEach(c => c.write(': ping\n\n')), 25000).unref();
 
 server.listen(cfg.port, () => {
-  log('SOLANA RADAR em http://localhost:' + cfg.port + (cfg.publicUrl ? ' (webhook: ' + cfg.publicUrl + '/webhook/helius)' : ' (modo local: sem webhook)'));
+  log('SOLANA RADAR on port ' + cfg.port + (cfg.publicUrl ? ' (live, webhook: ' + cfg.publicUrl + '/webhook/helius)' : ' (local mode: no webhook)'));
   app.start();
 });
