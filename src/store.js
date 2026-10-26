@@ -248,6 +248,12 @@ class Store {
       .run(wallet, ts, m.txs, m.buys, m.sells, m.tokenSwaps, m.transfersIn, m.transfersOut, m.other, v.flag ? 1 : 0, v.reason);
   }
 
+  // Totals of everything audited so far (used to fill the dashboard after a restart).
+  auditSummary() {
+    const r = this.db.prepare('SELECT COUNT(*) AS c, COALESCE(SUM(flagged), 0) AS f, MAX(audited_at) AS t FROM wallet_audit').get();
+    return { checked: r.c, flagged: r.f, lastAt: r.t };
+  }
+
   auditsSince(ts) {
     return this.db.prepare('SELECT COUNT(*) AS c FROM wallet_audit WHERE audited_at >= ?').get(ts).c;
   }
@@ -291,6 +297,7 @@ class NullStore {
   getAudits() { return new Map(); }
   saveAudit() {}
   auditsSince() { return 0; }
+  auditSummary() { return { checked: 0, flagged: 0, lastAt: null }; }
   addActivity() {}
   activityRates() { return new Map(); }
   addUsage() {}

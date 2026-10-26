@@ -87,7 +87,7 @@ test('audit: a wallet whose history cannot be read is kept (unverified), and a r
   const limit = Object.assign(new Error('Helius rate limit reached'), { kind: 'limit' });
   const { app, seen } = auditedApp({}, cands, w => w === cands[1].wallet ? limit : metrics());
   await app.refreshRanking();
-  assert.strictEqual(seen.length, 2, 'after the rate limit no more calls are made');
+  assert.strictEqual(seen.length, 5, '1 good wallet + 4 attempts on the rate-limited one, then nothing more');
   assert.strictEqual(app.candidates.length, 5, 'nobody is dropped because of an error');
   assert.strictEqual(app.status.audit.unverified, 4);
   assert.ok(/rate limit/.test(app.status.audit.error));

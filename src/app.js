@@ -77,6 +77,7 @@ class RadarApp {
   async start() {
     this._restore();
     this._loadWatchlist();
+    this._loadAuditSummary();
     await this.refreshRanking();
     this._timers = [
       setInterval(() => this.refreshRanking(), this.cfg.rankingRefreshMs),
@@ -93,7 +94,7 @@ class RadarApp {
     this.priceJob();
   }
 
-  stop() { (this._timers || []).forEach(clearInterval); this.flushUsage(); }
+  stop() { (this._timers || []).forEach(clearInterval); clearTimeout(this._retryTimer); this.flushUsage(); }
 
   // Rebuilds in-memory state from the store after a restart: recent alerts, and the detector windows
   // (so a wave in progress continues and an alert already sent is not sent again).
@@ -204,6 +205,15 @@ class RadarApp {
     } catch (e) { this.log('watchlist load error: ' + e.message); }
   }
 
+  // After a restart the in-memory audit counters are empty: show the totals kept in the database.
+  _loadAuditSummary() {
+    if (!this.status.audit.enabled || !this.store.persistent) return;
+    try {
+      const sm = this.store.auditSummary();
+      if (sm.checked > 0) Object.assign(this.status.audit, { checked: sm.checked, flagged: sm.flagged, lastRunAt: sm.lastAt });
+    } catch (e) { this.log('audit summary error: ' + e.message); }
+  }
+
   _setFrozen(entries, ts) {
     this.candidates = entries;
     this.frozenAt = ts;
@@ -215,11 +225,23 @@ class RadarApp {
   _maybeFreeze() {
     if (this.cfg.watchlistMode !== 'frozen' || this.frozenAt) return;
     const chosen = this._verified.slice(0, this.cfg.rankingSize);
-    if (chosen.length < this.cfg.minTracked) { this.log('not enough verified wallets to fix the list yet (' + chosen.length + '); will retry'); return; }
+    // Never fix a list from an audit that was cut short (error, rate limit, daily cap): it would be tiny and permanent.
+    // The verdicts already collected are cached, so the retry continues where this one stopped without paying again.
+    if (!this._auditComplete || chosen.length < this.cfg.minTracked) {
+      this.log('not fixing the list yet (' + chosen.length + ' verified wallets, audit ' + (this._auditComplete ? 'complete' : 'incomplete: ' + (this.status.audit.error || 'daily cap or depth limit')) + '); continuing in ' + Math.round(this.cfg.auditRetryAfterMs / MIN) + ' min');
+      this._scheduleRetry();
+      return;
+    }
     const ts = Date.now();
     try { this.store.saveWatchlist(chosen, ts); } catch (e) { this.log('watchlist save error: ' + e.message); }
     this._setFrozen(chosen, ts);
     this.log('FIXED the watchlist with ' + chosen.length + ' audited wallets; no more ranking calls or audits (set WATCHLIST_RESET=true for one start to choose again)');
+  }
+
+  _scheduleRetry() {
+    if (this._retryTimer) return;
+    this._retryTimer = setTimeout(() => { this._retryTimer = null; this.refreshRanking(); }, this.cfg.auditRetryAfterMs);
+    if (this._retryTimer.unref) this._retryTimer.unref();
   }
 
   // Behaviour audit: walks the candidates best-first, reusing cached verdicts, and drops wallets whose token activity is
@@ -228,7 +250,7 @@ class RadarApp {
   async _auditCandidates(eligible) {
     const cfg = this.cfg;
     const info = this.status.audit;
-    if (!info.enabled) { this._verified = eligible.slice(); return eligible; }
+    if (!info.enabled) { this._verified = eligible.slice(); this._auditComplete = true; return eligible; }
     const now = Date.now();
     const cached = this.store.getAudits(eligible.map(e => e.wallet), now - cfg.auditMaxAgeHours * HOUR);
     const dayStart = Date.parse(dayKey() + 'T00:00:00Z');
@@ -237,33 +259,46 @@ class RadarApp {
     const verified = [];
     const tail = [];
     const flagged = new Map();
-    let checked = 0, unverified = 0, calls = 0, stop = false;
+    let checked = 0, unverified = 0, calls = 0, errors = 0, stop = false, capHit = false;
     info.error = null;
     for (const e of eligible) {
       if (verified.length >= cfg.rankingSize || checked >= cfg.auditMaxWallets) { tail.push(e); continue; } // stop on VERIFIED wallets: unverified ones must not end the search early
       checked++;
       let row = cached.get(e.wallet);
       if (!row) {
-        if (stop || callsToday >= cfg.auditMaxCallsPerDay) { unverified++; clean.push(e); continue; }
-        try {
-          const m = await this.auditWallet(cfg.heliusKey, e.wallet, cfg.minBuySol);
-          callsToday++; calls++; this._mem.audits++;
-          this._addMgmt(cfg.auditCallCredits);
-          const v = audit.verdict(m, { minActions: cfg.auditMinActions, maxTransferShare: cfg.auditMaxTransferShare });
-          try { this.store.saveAudit(e.wallet, m, v, Date.now()); } catch (err) { this.log('audit write error: ' + err.message); }
-          row = { flagged: v.flag, reason: v.reason };
-          if (cfg.auditDelayMs) await new Promise(r => setTimeout(r, cfg.auditDelayMs));
-        } catch (err) {
-          info.error = err.message;
-          if (err.kind === 'limit') stop = true;
+        if (callsToday >= cfg.auditMaxCallsPerDay) { capHit = true; unverified++; clean.push(e); continue; }
+        if (stop) { unverified++; clean.push(e); continue; }
+        // A rate limit is retried with a growing pause before giving up: giving up cuts the audit short.
+        let m = null, lastErr = null;
+        for (let attempt = 0; attempt < 4 && !m; attempt++) {
+          try { m = await this.auditWallet(cfg.heliusKey, e.wallet, cfg.minBuySol); } catch (err) {
+            lastErr = err;
+            if (err.kind !== 'limit' || attempt === 3) break;
+            if (cfg.auditRetryMs) await new Promise(r => setTimeout(r, cfg.auditRetryMs * Math.pow(2, attempt)));
+          }
+        }
+        if (!m) {
+          info.error = lastErr.message; errors++;
+          if (lastErr.kind === 'limit') stop = true;
           unverified++; clean.push(e); continue;
         }
+        callsToday++; calls++; this._mem.audits++;
+        this._addMgmt(cfg.auditCallCredits);
+        const v = audit.verdict(m, { minActions: cfg.auditMinActions, maxTransferShare: cfg.auditMaxTransferShare });
+        try { this.store.saveAudit(e.wallet, m, v, Date.now()); } catch (err) { this.log('audit write error: ' + err.message); }
+        row = { flagged: v.flag, reason: v.reason };
+        if (cfg.auditDelayMs) await new Promise(r => setTimeout(r, cfg.auditDelayMs));
       }
       if (row.flagged) flagged.set(e.wallet, row.reason); else { clean.push(e); verified.push(e); }
     }
     this.flagged = flagged;
     this._verified = verified;
-    Object.assign(info, { checked, flagged: flagged.size, unverified, calls, lastRunAt: Date.now() });
+    // Complete = the search reached its goal (enough verified wallets) or covered everything it was meant to look at
+    // without being cut short by an error, the rate limit or the daily cap. Only a complete audit may fix the list.
+    const reached = verified.length >= cfg.rankingSize;
+    const covered = checked >= cfg.auditMaxWallets || checked >= eligible.length;
+    this._auditComplete = reached || (covered && !stop && !capHit && errors === 0 && unverified === 0);
+    Object.assign(info, { checked, flagged: flagged.size, unverified, calls, complete: this._auditComplete, lastRunAt: Date.now() });
     if (calls || flagged.size) this.log('audit: checked ' + checked + ', excluded ' + flagged.size + ' pass-through wallets, ' + calls + ' new history calls, ' + unverified + ' unverified');
     return clean.concat(tail);
   }

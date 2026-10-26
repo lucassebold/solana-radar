@@ -60,6 +60,8 @@ module.exports = {
   watchlistReset: ['true', '1', 'yes', 'on'].indexOf(String(process.env.WATCHLIST_RESET || '').trim().toLowerCase()) >= 0, // discard the saved list at start and choose again
   auditEnabled: process.env.AUDIT_ENABLED !== 'false',
   auditDelayMs: num('AUDIT_DELAY_MS', 250),               // pause between history calls (Helius rate limits)
+  auditRetryMs: num('AUDIT_RETRY_MS', 2000),               // first pause after a Helius rate limit (doubles on each retry)
+  auditRetryAfterMs: num('AUDIT_RETRY_AFTER_MINUTES', 15) * 60 * 1000, // an incomplete audit is continued after this long
   auditMaxWallets: num('AUDIT_MAX_WALLETS', 120),         // how deep into the ranking to look for clean wallets
   auditMaxCallsPerDay: num('AUDIT_MAX_CALLS_PER_DAY', 150),
   auditMaxAgeHours: num('AUDIT_MAX_AGE_HOURS', 168),      // a verdict is reused this long
