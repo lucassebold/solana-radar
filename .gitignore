@@ -1,0 +1,5 @@
+.env
+node_modules/
+.lb_sample.json
+.helius_sample.json
+.helius_buy.json
