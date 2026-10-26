@@ -90,3 +90,15 @@ tbody tr:hover { background: rgba(157,107,255,.05); }
   th:nth-child(6), td:nth-child(6) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .radar .sweep, .skeleton { animation: none; } }
+
+/* history features */
+.alert.sell { border-color: #6b2c3a; }
+.alert.sell.latest { border-color: var(--red); box-shadow: 0 0 0 1px rgba(255,107,122,.18), 0 0 24px rgba(255,107,122,.08); }
+.badge.sell { background: rgba(255,107,122,.16); color: var(--red); }
+.side { font: 700 11px var(--mono); letter-spacing: .12em; margin-right: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(61,220,151,.14); color: var(--green); vertical-align: middle; }
+.side.sell { background: rgba(255,107,122,.16); color: var(--red); }
+.price { margin-top: 6px; font: 12px var(--mono); color: var(--muted); }
+.price b.pos { color: var(--green); } .price b.neg { color: var(--red); }
+.perf-title { font: 11px var(--mono); letter-spacing: .14em; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; }
+.tokens a { margin-right: 10px; font: 12px var(--mono); }
+td.wrap { white-space: normal; }

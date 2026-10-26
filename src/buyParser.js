@@ -1,6 +1,6 @@
 'use strict';
 
-// Mints that do not count as a "bought token": wrapped SOL and stablecoins.
+// Mints that do not count as a traded token: wrapped SOL and stablecoins.
 const WSOL = 'So11111111111111111111111111111111111111112';
 const IGNORED_MINTS = {
   [WSOL]: true,
@@ -17,10 +17,11 @@ function tokenDelta(change) {
 }
 
 // Helius often mislabels Pump.fun transactions (they show up as TRANSFER/UNKNOWN), so the `type` field
-// is ignored. A buy is: the wallet's token balance went up AND the wallet spent SOL.
-// Source: balance changes in `accountData` (validated against MadeOnSol's feed).
-// isMonitored(address) -> boolean.
-function parseBuys(tx, isMonitored, minBuySol) {
+// is ignored. Trades are derived from balance changes in `accountData` (validated against MadeOnSol's feed):
+//   buy  = the wallet's token balance went UP and it spent SOL
+//   sell = the wallet's token balance went DOWN and it received SOL
+// isMonitored(address) -> boolean. Returns [{side, wallet, mint, solAmount, tokenAmount, signature, ts}].
+function parseTrades(tx, isMonitored, minSol) {
   if (!tx || !tx.signature || tx.transactionError) return [];
   const accountData = Array.isArray(tx.accountData) ? tx.accountData : [];
   const nativeByWallet = {};
@@ -38,26 +39,39 @@ function parseBuys(tx, isMonitored, minBuySol) {
   });
 
   const ts = (Number(tx.timestamp) || 0) * 1000;
-  const buys = [];
+  const trades = [];
   Object.keys(tokenByWallet).forEach(wallet => {
     const tokens = tokenByWallet[wallet];
     const nativeDelta = nativeByWallet[wallet] || 0; // lamports
     const wsolDelta = tokens[WSOL] || 0;
     const solSpent = (nativeDelta < 0 ? -nativeDelta / 1e9 : 0) + (wsolDelta < 0 ? -wsolDelta : 0);
-    if (solSpent < minBuySol) return; // did not really spend SOL: airdrop, transfer, sell
-    const bought = Object.keys(tokens).filter(m => !IGNORED_MINTS[m] && tokens[m] > 0);
-    bought.forEach(mint => {
-      buys.push({
-        wallet,
-        mint,
+    const solReceived = (nativeDelta > 0 ? nativeDelta / 1e9 : 0) + (wsolDelta > 0 ? wsolDelta : 0);
+    const traded = Object.keys(tokens).filter(m => !IGNORED_MINTS[m] && tokens[m] !== 0);
+
+    if (solSpent >= minSol) {
+      const bought = traded.filter(m => tokens[m] > 0);
+      bought.forEach(mint => trades.push({
+        side: 'buy', wallet, mint,
         // With several tokens in one transaction the SOL amount cannot be attributed to any one of them.
         solAmount: bought.length === 1 ? solSpent : null,
-        signature: tx.signature,
-        ts
-      });
-    });
+        tokenAmount: bought.length === 1 ? tokens[mint] : null,
+        signature: tx.signature, ts
+      }));
+    } else if (solReceived >= minSol) {
+      const sold = traded.filter(m => tokens[m] < 0);
+      sold.forEach(mint => trades.push({
+        side: 'sell', wallet, mint,
+        solAmount: sold.length === 1 ? solReceived : null,
+        tokenAmount: sold.length === 1 ? -tokens[mint] : null,
+        signature: tx.signature, ts
+      }));
+    }
   });
-  return buys;
+  return trades;
 }
 
-module.exports = { parseBuys, WSOL };
+function parseBuys(tx, isMonitored, minSol) {
+  return parseTrades(tx, isMonitored, minSol).filter(t => t.side === 'buy');
+}
+
+module.exports = { parseTrades, parseBuys, WSOL };

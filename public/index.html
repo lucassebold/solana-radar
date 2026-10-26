@@ -22,6 +22,7 @@
 </header>
 
 <main>
+  <div id="storageNotice"></div>
   <section class="summary">
     <div class="card">
       <span class="label">Monthly ranking</span>
@@ -43,6 +44,23 @@
     <div id="radarNotice"></div>
     <div id="alerts"></div>
     <p class="disclaimer">Possible opportunity for analysis only. Not financial advice and no guarantee of gains: monitored wallets also sell to the people who copy them.</p>
+  </section>
+
+  <section class="card block">
+    <div class="block-head">
+      <h2>Recurring co-buyers</h2>
+      <span id="pairsMeta" class="meta"></span>
+    </div>
+    <div id="pairsBox"></div>
+    <p class="foot">Pairs of monitored wallets that bought the same token within the window of each other, counted in distinct tokens (last 30 days). Needs history, so it fills up over time.</p>
+  </section>
+
+  <section class="card block">
+    <div class="block-head">
+      <h2>Alert track record</h2>
+    </div>
+    <div id="perfBox"></div>
+    <p class="foot">Price change measured from the moment of each alert (DexScreener price in SOL). Small samples early on; this describes the past and is not a prediction.</p>
   </section>
 
   <section class="card block">

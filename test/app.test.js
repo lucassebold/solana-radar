@@ -19,6 +19,7 @@ function txBuy(wallet, mint, sol, ts, sig) {
 
 function appWith(wallets) {
   const app = new RadarApp(cfg, () => {});
+  app.fetchTokens = async () => new Map(); // no network in tests
   app.walletInfo = new Map(wallets.map(w => [w, { wallet: w, name: 'kol-' + w }]));
   return app;
 }
@@ -114,7 +115,7 @@ test('server: a webhook without the right secret gets 401; with it, 200', async 
   const port = 38000 + Math.floor(Math.random() * 1000);
   // Invalid MadeOnSol key on purpose: the server boots, the ranking fails (handled) and the endpoint stays up.
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
-    env: Object.assign({}, process.env, { PORT: String(port), MADEONSOL_API_KEY: 'invalid-test-key', HELIUS_API_KEY: 'invalid-test-key', PUBLIC_URL: 'http://localhost:' + port, WEBHOOK_SECRET: 'test-secret-123456' }),
+    env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: require('os').tmpdir() + '/solana-radar-test-' + port, MADEONSOL_API_KEY: 'invalid-test-key', HELIUS_API_KEY: 'invalid-test-key', PUBLIC_URL: 'http://localhost:' + port, WEBHOOK_SECRET: 'test-secret-123456' }),
     stdio: 'ignore'
   });
   try {

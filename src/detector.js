@@ -22,7 +22,7 @@ class ConvergenceDetector {
 
     let list = this.buysByMint.get(buy.mint);
     if (!list) { list = []; this.buysByMint.set(buy.mint, list); }
-    list.push({ wallet: buy.wallet, ts: buy.ts, solAmount: buy.solAmount, signature: buy.signature });
+    list.push({ wallet: buy.wallet, ts: buy.ts, solAmount: buy.solAmount, tokenAmount: buy.tokenAmount === undefined ? null : buy.tokenAmount, signature: buy.signature });
     list.sort((a, b) => a.ts - b.ts);
     if (list.length > MAX_BUYS_PER_MINT) list.splice(0, list.length - MAX_BUYS_PER_MINT);
 
@@ -50,6 +50,22 @@ class ConvergenceDetector {
     const state = { id: buy.mint + ':' + firstTs, wallets, firstTs, lastTs };
     this.alertByMint.set(buy.mint, state);
     return { kind: 'new', alert: this._build(buy.mint, state, list) };
+  }
+
+  // Loads a past buy (from storage after a restart) without raising an alert.
+  seed(buy) {
+    const key = buy.signature + '|' + buy.wallet + '|' + buy.mint;
+    if (this.seen.has(key)) return;
+    this.seen.set(key, buy.ts);
+    let list = this.buysByMint.get(buy.mint);
+    if (!list) { list = []; this.buysByMint.set(buy.mint, list); }
+    list.push({ wallet: buy.wallet, ts: buy.ts, solAmount: buy.solAmount, tokenAmount: buy.tokenAmount === undefined ? null : buy.tokenAmount, signature: buy.signature });
+    list.sort((a, b) => a.ts - b.ts);
+  }
+
+  // Restores the alert state of a wave that was already emitted before a restart (prevents re-alerting).
+  restoreAlert(mint, state) {
+    this.alertByMint.set(mint, { id: state.id, wallets: new Set(state.wallets), firstTs: state.firstTs, lastTs: state.lastTs });
   }
 
   // Best window [t, t+windowMs] containing the newly arrived buy, picking the one with the most distinct wallets.
@@ -83,7 +99,7 @@ class ConvergenceDetector {
       walletCount: buys.length,
       firstTs: state.firstTs,
       lastTs: state.lastTs,
-      buys: buys.map(b => ({ wallet: b.wallet, ts: b.ts, solAmount: b.solAmount, signature: b.signature }))
+      buys: buys.map(b => ({ wallet: b.wallet, ts: b.ts, solAmount: b.solAmount, tokenAmount: b.tokenAmount, signature: b.signature }))
     };
   }
 

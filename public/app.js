@@ -73,17 +73,21 @@
   }
 
   function alertCard(a, latest) {
-    var card = h('div', 'alert' + (latest ? ' latest' : ' old'));
+    var sell = a.side === 'sell';
+    var card = h('div', 'alert' + (sell ? ' sell' : '') + (latest ? ' latest' : ' old'));
     var head = h('div', 'alert-head');
     var left = h('div');
-    var tok = h('div', 'token', a.symbol || 'Token');
+    var tok = h('div', 'token');
+    tok.appendChild(h('span', 'side' + (sell ? ' sell' : ''), sell ? 'SELL' : 'BUY'));
+    tok.appendChild(document.createTextNode(a.symbol || 'Token'));
     if (a.name) tok.appendChild(h('small', null, a.name));
     if (a.kind === 'update') tok.appendChild(h('span', 'tag', 'updated'));
     left.appendChild(tok);
     left.appendChild(h('div', 'mint', a.mint));
-    left.appendChild(h('div', 'when', 'buys between ' + hhmmss(a.firstTs) + ' and ' + hhmmss(a.lastTs) + ' · alert ' + ago(a.emittedAt)));
+    left.appendChild(h('div', 'when', (sell ? 'sells' : 'buys') + ' between ' + hhmmss(a.firstTs) + ' and ' + hhmmss(a.lastTs) + ' · alert ' + ago(a.emittedAt)));
+    left.appendChild(priceLine(a, sell));
     head.appendChild(left);
-    head.appendChild(h('span', 'badge', a.walletCount + ' wallets'));
+    head.appendChild(h('span', 'badge' + (sell ? ' sell' : ''), a.walletCount + ' wallets'));
     card.appendChild(head);
 
     if (BASE58.test(a.mint)) {
@@ -108,6 +112,99 @@
     });
     card.appendChild(buys);
     return card;
+  }
+
+  // SOL price with 3 significant digits (token prices are tiny), never rounded to 0.
+  function fmtPrice(p) { return p === null || p === undefined ? null : Number(p.toPrecision(3)).toString().indexOf('e') >= 0 ? p.toExponential(2) : Number(p.toPrecision(3)).toString(); }
+
+  function priceLine(a, sell) {
+    var line = h('div', 'price');
+    if (a.sinceEntryPct === null || a.sinceEntryPct === undefined || a.priceNow === null || a.priceNow === undefined) {
+      line.textContent = 'price since first ' + (sell ? 'sell' : 'buy') + ': unavailable';
+      return line;
+    }
+    var pct = a.sinceEntryPct;
+    line.appendChild(document.createTextNode('since first ' + (sell ? 'sell' : 'buy') + ': '));
+    // For a buy alert up is good (green); for a sell alert a drop after the sell is the "good" outcome.
+    var good = sell ? pct < 0 : pct > 0;
+    var b = h('b', good ? 'pos' : (pct === 0 ? '' : 'neg'), (pct > 0 ? '+' : '') + fmt(pct, 1) + '%');
+    line.appendChild(b);
+    line.appendChild(document.createTextNode(' · now ' + fmtPrice(a.priceNow) + ' SOL'));
+    return line;
+  }
+
+  function renderStorage() {
+    var el = $('storageNotice');
+    if (!state) { notice(el, '', ''); return; }
+    var st = state.status.storage;
+    if (!st || !st.enabled) notice(el, 'warn', 'History is off (SQLite unavailable): alerts and co-buyer stats will not survive a restart.');
+    else if (!st.durable) notice(el, 'warn', 'History is stored on a non-persistent disk: attach a volume to the service or it is lost on every redeploy.');
+    else notice(el, '', '');
+  }
+
+  function renderPairs() {
+    var box = $('pairsBox'), meta = $('pairsMeta');
+    clear(box);
+    if (!state) return;
+    var pairs = state.pairs || [];
+    meta.textContent = pairs.length ? pairs.length + ' pairs' : '';
+    if (!pairs.length) {
+      box.appendChild(h('div', 'empty', 'No recurring pairs yet. They appear once two wallets have bought the same tokens together at least twice.'));
+      return;
+    }
+    var wrap = h('div', 'table-wrap'), table = h('table'), thead = h('thead'), hr = h('tr');
+    ['Wallets', 'Tokens together', 'Last together', 'Recent tokens'].forEach(function (t, i) { hr.appendChild(h('th', i === 1 ? 'num' : null, t)); });
+    thead.appendChild(hr); table.appendChild(thead);
+    var body = h('tbody');
+    pairs.forEach(function (p) {
+      var tr = h('tr');
+      var td = h('td');
+      [[p.a, p.aLabel], [p.b, p.bLabel]].forEach(function (w, i) {
+        if (i) td.appendChild(document.createTextNode(' + '));
+        td.appendChild(BASE58.test(w[0]) ? link('https://solscan.io/account/' + w[0], short(w[0])) : h('span', null, short(w[0])));
+        if (w[1]) td.appendChild(h('span', 'nm', w[1]));
+      });
+      tr.appendChild(td);
+      tr.appendChild(h('td', 'num', String(p.count)));
+      tr.appendChild(h('td', null, ago(p.lastTs)));
+      var tk = h('td', 'tokens wrap');
+      p.mints.forEach(function (m) {
+        var label = m.symbol || short(m.mint);
+        tk.appendChild(BASE58.test(m.mint) ? link('https://dexscreener.com/solana/' + m.mint, label) : h('span', null, label));
+      });
+      tr.appendChild(tk);
+      body.appendChild(tr);
+    });
+    table.appendChild(body); wrap.appendChild(table); box.appendChild(wrap);
+  }
+
+  function renderPerf() {
+    var box = $('perfBox');
+    clear(box);
+    if (!state) return;
+    var perf = state.performance || { buy: [], sell: [] };
+    if (!perf.buy.length && !perf.sell.length) {
+      box.appendChild(h('div', 'empty', 'No track record yet. Prices are recorded 5 min, 15 min, 1 h and 4 h after each alert.'));
+      return;
+    }
+    [['buy', 'Buy alerts'], ['sell', 'Sell alerts']].forEach(function (g) {
+      var rows = perf[g[0]];
+      if (!rows.length) return;
+      box.appendChild(h('div', 'perf-title', g[1]));
+      var wrap = h('div', 'table-wrap'), table = h('table'), thead = h('thead'), hr = h('tr');
+      ['After alert', 'Alerts measured', 'Median change', 'Higher than at alert'].forEach(function (t, i) { hr.appendChild(h('th', i ? 'num' : null, t)); });
+      thead.appendChild(hr); table.appendChild(thead);
+      var body = h('tbody');
+      rows.forEach(function (r) {
+        var tr = h('tr');
+        tr.appendChild(h('td', null, r.checkpoint));
+        tr.appendChild(h('td', 'num', String(r.n)));
+        tr.appendChild(h('td', 'num ' + (r.medianPct > 0 ? 'pos' : r.medianPct < 0 ? 'neg' : ''), (r.medianPct > 0 ? '+' : '') + fmt(r.medianPct, 1) + '%'));
+        tr.appendChild(h('td', 'num', fmt(r.positivePct, 0) + '%'));
+        body.appendChild(tr);
+      });
+      table.appendChild(body); wrap.appendChild(table); box.appendChild(wrap);
+    });
   }
 
   function rankMeta() {
@@ -150,7 +247,7 @@
     return td;
   }
 
-  function render() { renderPill(); renderSummary(); renderAlerts(); renderRanking(); }
+  function render() { renderPill(); renderStorage(); renderSummary(); renderAlerts(); renderPairs(); renderPerf(); renderRanking(); }
   function setState(s) { state = s; lastFetchOk = Date.now(); render(); }
 
   // Real time over SSE (the browser reconnects by itself); polling every 20 s as a safety net.

@@ -24,6 +24,10 @@ function num(name, def) {
   return Number.isFinite(v) && process.env[name] !== '' && process.env[name] !== undefined ? v : def;
 }
 
+// History location. On Railway attach a Volume (it sets RAILWAY_VOLUME_MOUNT_PATH); locally ./data is used.
+const dataDir = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, '..', 'data');
+const durable = Boolean(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH) || !process.env.RAILWAY_ENVIRONMENT;
+
 const publicUrl = (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
 
 module.exports = {
@@ -32,6 +36,11 @@ module.exports = {
   madeonsolKey: process.env.MADEONSOL_API_KEY || '',
   webhookSecret: process.env.WEBHOOK_SECRET || '',
   publicUrl,
+  dataDir,
+  durable,
+  retentionDays: num('RETENTION_DAYS', 90),
+  pairsDays: num('PAIRS_DAYS', 30),
+  pairsMinCount: num('PAIRS_MIN_COUNT', 2),
   rankingSize: num('RANKING_SIZE', 50),
   rankingRefreshMs: num('RANKING_REFRESH_HOURS', 6) * 3600 * 1000,
   windowMs: num('WINDOW_MINUTES', 5) * 60 * 1000,

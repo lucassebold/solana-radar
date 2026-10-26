@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const cfg = require('./config');
 const { RadarApp } = require('./app');
 const { scrub } = require('./http');
+const { openStore } = require('./store');
 
 const secrets = [cfg.heliusKey, cfg.madeonsolKey, cfg.webhookSecret];
 const log = msg => console.log(new Date().toISOString().slice(11, 19) + ' ' + scrub(msg, secrets));
@@ -16,7 +17,9 @@ if (!cfg.madeonsolKey) missing.push('MADEONSOL_API_KEY');
 if (cfg.publicUrl && cfg.webhookSecret.length < 16) missing.push('WEBHOOK_SECRET (min. 16 characters)');
 if (missing.length) { console.error('Missing configuration (set in .env or the host environment variables): ' + missing.join(', ')); process.exit(1); }
 
-const app = new RadarApp(cfg, log);
+const store = openStore(cfg.dataDir, log);
+if (store.persistent) log('history: ' + store.file + (cfg.durable ? '' : ' (NOT on a persistent volume: history is lost on redeploy)'));
+const app = new RadarApp(cfg, log, store);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 const MAX_BODY = 5 * 1024 * 1024;
@@ -88,3 +91,6 @@ server.listen(cfg.port, () => {
   log('SOLANA RADAR on port ' + cfg.port + (cfg.publicUrl ? ' (live, webhook: ' + cfg.publicUrl + '/webhook/helius)' : ' (local mode: no webhook)'));
   app.start();
 });
+
+// Railway sends SIGTERM on redeploy: close the database cleanly.
+process.on('SIGTERM', () => { app.stop(); store.close(); process.exit(0); });
