@@ -6,7 +6,7 @@ Two features, one screen:
 2. **Synchronized buy radar**: raises an alert when **3 or more distinct wallets** from the ranking buy the **same token** within **5 minutes**. The latest alert stays on screen until a newer one arrives.
 
 No database: everything lives in memory (after a restart the radar starts empty and the ranking is fetched again).
-No npm dependencies. Runs on Node 12+.
+No npm dependencies. Requires Node 22.13+ (uses the built-in `node:sqlite` for history).
 
 > Possible opportunity for analysis only. Not financial advice and no guarantee of gains.
 

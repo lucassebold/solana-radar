@@ -8,5 +8,5 @@
     "start": "node src/server.js",
     "test": "node test/run.js"
   },
-  "engines": { "node": ">=12" }
+  "engines": { "node": ">=22.13" }
 }
