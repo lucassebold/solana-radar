@@ -6,7 +6,7 @@ function makeCfg(over) {
     dataDir: '', durable: true, retentionDays: 90, pairsDays: 30, pairsMinCount: 2,
     rankingSize: 50, rankingSource: 'alpha', poolSize: 300, maxInactiveDays: 14, minHoldMinutes: 5,
     rankingRefreshMs: 1e9, windowMs: 5 * 60 * 1000, minWallets: 3, minBuySol: 0.01, dailyEventWarn: 30000,
-    paused: false, creditUnit: 'event', heliusPlanCredits: 1000000, budgetFraction: 0.9, hardStopFraction: 0.97, billingDay: 1, creditsUsedOffset: 0,
+    paused: false, watchlistMode: 'dynamic', watchlistReset: false, auditEnabled: false, auditDelayMs: 0, auditMaxWallets: 120, auditMaxCallsPerDay: 150, auditMaxAgeHours: 168, auditMinActions: 15, auditMaxTransferShare: 0.25, auditCallCredits: 100, creditUnit: 'event', heliusPlanCredits: 1000000, budgetFraction: 0.9, hardStopFraction: 0.97, billingDay: 1, creditsUsedOffset: 0,
     calibrationDefault: 10, minTracked: 5, maxWalletShare: 0.15, maxWebhookEditsPerDay: 6, madeonsolDailyLimit: 150
   }, over || {});
 }

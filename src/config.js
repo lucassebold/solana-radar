@@ -53,6 +53,19 @@ module.exports = {
   // Manual pause: with RADAR_PAUSED=true the app deletes its Helius webhook at start and does not recreate it (no credits
   // are spent). Remove the variable (or set it to false) and restart to resume.
   paused: ['true', '1', 'yes', 'on'].indexOf(String(process.env.RADAR_PAUSED || '').trim().toLowerCase()) >= 0,
+  // Wallet behaviour audit: drops wallets that mostly move tokens by transfer instead of trading (see src/audit.js).
+  // 'frozen' (default): audit once, keep that list fixed (no more ranking calls, no more audits).
+  // 'dynamic': refresh the candidates every few hours and re-audit new ones.
+  watchlistMode: process.env.WATCHLIST_MODE === 'dynamic' ? 'dynamic' : 'frozen',
+  watchlistReset: ['true', '1', 'yes', 'on'].indexOf(String(process.env.WATCHLIST_RESET || '').trim().toLowerCase()) >= 0, // discard the saved list at start and choose again
+  auditEnabled: process.env.AUDIT_ENABLED !== 'false',
+  auditDelayMs: num('AUDIT_DELAY_MS', 250),               // pause between history calls (Helius rate limits)
+  auditMaxWallets: num('AUDIT_MAX_WALLETS', 120),         // how deep into the ranking to look for clean wallets
+  auditMaxCallsPerDay: num('AUDIT_MAX_CALLS_PER_DAY', 150),
+  auditMaxAgeHours: num('AUDIT_MAX_AGE_HOURS', 168),      // a verdict is reused this long
+  auditMinActions: num('AUDIT_MIN_ACTIONS', 15),          // fewer token actions than this: not judged, not flagged
+  auditMaxTransferShare: num('AUDIT_MAX_TRANSFER_SHARE', 0.25), // flagged when transfers are this share of token actions
+  auditCallCredits: num('AUDIT_CALL_CREDITS', 100),       // assumed Helius cost of one history call (verify on the Usage page)
   creditUnit: process.env.CREDIT_UNIT === 'push' ? 'push' : 'event',
   heliusPlanCredits: num('HELIUS_PLAN_CREDITS', 1000000),
   budgetFraction: num('BUDGET_FRACTION', 0.9),   // we plan to use at most this share of the plan

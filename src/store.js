@@ -44,6 +44,14 @@ class Store {
         day TEXT PRIMARY KEY, events INTEGER NOT NULL DEFAULT 0,
         mgmt_credits INTEGER NOT NULL DEFAULT 0, madeonsol_calls INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS wallet_audit (
+        wallet TEXT PRIMARY KEY, audited_at INTEGER NOT NULL,
+        txs INTEGER, buys INTEGER, sells INTEGER, token_swaps INTEGER, transfers_in INTEGER, transfers_out INTEGER, other INTEGER,
+        flagged INTEGER NOT NULL, reason TEXT
+      );
+      CREATE TABLE IF NOT EXISTS watchlist (
+        wallet TEXT PRIMARY KEY, position INTEGER NOT NULL, frozen_at INTEGER NOT NULL, data TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS tokens (
         mint TEXT PRIMARY KEY, symbol TEXT, name TEXT, updated_at INTEGER
       );
@@ -207,7 +215,45 @@ class Store {
     return r ? r.c : 0;
   }
 
+  // --- frozen watchlist: the wallets chosen once (after the behaviour audit) and kept fixed ---
+  loadWatchlist() {
+    const rows = this.db.prepare('SELECT wallet, frozen_at, data FROM watchlist ORDER BY position').all();
+    if (!rows.length) return null;
+    return { frozenAt: rows[0].frozen_at, entries: rows.map(r => JSON.parse(r.data)) };
+  }
+
+  saveWatchlist(entries, ts) {
+    this.db.exec('BEGIN');
+    try {
+      this.db.exec('DELETE FROM watchlist');
+      const stmt = this.db.prepare('INSERT INTO watchlist (wallet, position, frozen_at, data) VALUES (?, ?, ?, ?)');
+      entries.forEach((e, i) => stmt.run(e.wallet, i, ts, JSON.stringify(e)));
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+  }
+
+  clearWatchlist() { this.db.exec('DELETE FROM watchlist'); }
+
+  // --- wallet behaviour audit (cached so each wallet is checked rarely) ---
+  // Fresh audits (not older than minAuditedAt) for the given wallets: Map(wallet -> {flagged, reason, auditedAt}).
+  getAudits(wallets, minAuditedAt) {
+    const out = new Map();
+    const stmt = this.db.prepare('SELECT flagged, reason, audited_at FROM wallet_audit WHERE wallet = ? AND audited_at >= ?');
+    wallets.forEach(w => { const r = stmt.get(w, minAuditedAt); if (r) out.set(w, { flagged: r.flagged === 1, reason: r.reason, auditedAt: r.audited_at }); });
+    return out;
+  }
+
+  saveAudit(wallet, m, v, ts) {
+    this.db.prepare('INSERT INTO wallet_audit (wallet, audited_at, txs, buys, sells, token_swaps, transfers_in, transfers_out, other, flagged, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(wallet) DO UPDATE SET audited_at = excluded.audited_at, txs = excluded.txs, buys = excluded.buys, sells = excluded.sells, token_swaps = excluded.token_swaps, transfers_in = excluded.transfers_in, transfers_out = excluded.transfers_out, other = excluded.other, flagged = excluded.flagged, reason = excluded.reason')
+      .run(wallet, ts, m.txs, m.buys, m.sells, m.tokenSwaps, m.transfersIn, m.transfersOut, m.other, v.flag ? 1 : 0, v.reason);
+  }
+
+  auditsSince(ts) {
+    return this.db.prepare('SELECT COUNT(*) AS c FROM wallet_audit WHERE audited_at >= ?').get(ts).c;
+  }
+
   prune(cutoffTs) {
+    this.db.prepare('DELETE FROM wallet_audit WHERE audited_at < ?').run(Date.now() - 60 * 86400e3);
     this.db.prepare('DELETE FROM wallet_activity WHERE hour < ?').run(Math.floor(Date.now() / 3600e3) - 24 * 8);
     this.db.prepare('DELETE FROM usage WHERE day < ?').run(new Date(Date.now() - 70 * 86400e3).toISOString().slice(0, 10));
     this.db.prepare('DELETE FROM trades WHERE ts < ?').run(cutoffTs);
@@ -239,6 +285,12 @@ class NullStore {
   alertsDueForPrice() { return []; }
   pairs() { return []; }
   performance() { return { buy: [], sell: [] }; }
+  loadWatchlist() { return null; }
+  saveWatchlist() {}
+  clearWatchlist() {}
+  getAudits() { return new Map(); }
+  saveAudit() {}
+  auditsSince() { return 0; }
   addActivity() {}
   activityRates() { return new Map(); }
   addUsage() {}

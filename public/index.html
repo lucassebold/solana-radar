@@ -27,7 +27,7 @@
     <div class="card">
       <span class="label">Monthly ranking</span>
       <strong id="sumWallets">—</strong>
-      <span class="hint">wallets monitored (top by realized profit, 30 days)</span>
+      <span class="hint">wallets monitored (a fixed list, picked once from the top by 30-day profit)</span>
     </div>
     <div class="card">
       <span class="label">Buy radar</span>
@@ -78,7 +78,7 @@
         <tbody id="rankBody"></tbody>
       </table>
     </div>
-    <p class="foot">Source: MadeOnSol alpha wallets (early buyers of Pump.fun tokens, bots excluded), last 30 days, best by realized profit. Only the wallets that fit the Helius credit budget are watched. “—” = not provided by the source (not zero).</p>
+    <p class="foot">Source: MadeOnSol alpha wallets (early buyers of Pump.fun tokens, bots excluded), best by realized profit over 30 days at the time the list was chosen. Wallets that mostly move tokens by transfer instead of trading were removed by a behaviour check, and the list is fixed: it does not change on its own. “—” = not provided by the source (not zero).</p>
   </section>
 </main>
 <script src="app.js"></script>

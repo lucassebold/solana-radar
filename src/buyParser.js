@@ -74,4 +74,4 @@ function parseBuys(tx, isMonitored, minSol) {
   return parseTrades(tx, isMonitored, minSol).filter(t => t.side === 'buy');
 }
 
-module.exports = { parseTrades, parseBuys, WSOL };
+module.exports = { parseTrades, parseBuys, WSOL, IGNORED_MINTS };

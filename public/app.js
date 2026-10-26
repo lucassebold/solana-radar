@@ -156,6 +156,10 @@
       box.appendChild(item('allowance', fmt(b.allowancePerDay, 0) + '/day'));
     }
     if (b.skippedNoisy) box.appendChild(item('skipped as too noisy', String(b.skippedNoisy)));
+    var au = state.status.audit;
+    if (au && au.enabled && au.lastRunAt) {
+      box.appendChild(item('behaviour check', au.checked + ' wallets checked, ' + au.flagged + ' excluded (mostly move tokens by transfer)' + (au.unverified ? ', ' + au.unverified + ' unverified' : '')));
+    }
     var wh = state.status.webhook;
     box.appendChild(item('today', fmt(wh.eventsToday, 0) + ' transactions in ' + fmt(wh.pushesToday || 0, 0) + ' deliveries'));
     box.appendChild(item('counting', b.creditUnit === 'push' ? '1 credit per delivery' : '1 credit per transaction'));
@@ -242,6 +246,7 @@
 
   function rankMeta() {
     var rk = state.status.ranking;
+    if (rk.frozen && rk.frozenAt) { $('rankMeta').textContent = 'fixed list · chosen ' + new Date(rk.frozenAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · stats are a snapshot from that day'; return; }
     $('rankMeta').textContent = rk.updatedAt ? 'updated ' + ago(rk.updatedAt) + ' (' + hhmmss(rk.updatedAt) + ')' : '';
   }
 
